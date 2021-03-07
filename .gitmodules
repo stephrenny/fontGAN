@@ -1,3 +1,0 @@
-[submodule "src/src/StyleGAN.pytorch"]
-	path = src/src/StyleGAN.pytorch
-	url = https://github.com/huangzh13/StyleGAN.pytorch.git
