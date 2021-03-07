@@ -84,16 +84,16 @@ class FontDataset(Dataset):
         out[start_h: start_h + new_h, start_w: start_w + new_w] = img
         return out, cfg
         
-        if w <= self.dims[1]:
-            w_start = (self.dims[1] - w) // 2
-            out[:, w_start:w_start + w] = image
-        else:
-            new_h = int(h * self.dims[1] / w)
-            img = cv2.resize(image, (self.dims[1], new_h))
-            h_start = (self.dims[0] - new_h) // 2
-            out[h_start: h_start + new_h, :] = img
+        # if w <= self.dims[1]:
+        #     w_start = (self.dims[1] - w) // 2
+        #     out[:, w_start:w_start + w] = image
+        # else:
+        #     new_h = int(h * self.dims[1] / w)
+        #     img = cv2.resize(image, (self.dims[1], new_h))
+        #     h_start = (self.dims[0] - new_h) // 2
+        #     out[h_start: h_start + new_h, :] = img
         
-        return out
+        # return out
 
     """
     Returns an font item of a certain font type (e.g. Helvetica-Reular)
@@ -111,24 +111,24 @@ class FontDataset(Dataset):
         condition, _ = self._shape_image(np.concatenate([rnd_char_images[key] for key in target_word], axis=1))
         target, _ = self._shape_image(np.concatenate([char_images[key] for key in target_word], axis=1), cfg)
         
-        return orig_font, condition, target
+        return 1 - orig_font, 1 - condition, 1 - target
         
         # Sort the images by keys, turn into array
-        char_images = 1 - np.array([char_images[key] for key in sorted(list(char_images.keys()))]).astype(np.float) / 255
+        # char_images = 1 - np.array([char_images[key] for key in sorted(list(char_images.keys()))]).astype(np.float) / 255
 
-        target = char_images
-        condition = np.zeros((self.n_chars, self.dims[0], self.dims[1])).astype(np.float)
-        # random indices of 
-        condition_idxs = np.random.choice(self.n_chars, self.num_condition)
-        condition[condition_idxs] = target[condition_idxs]
+        # target = char_images
+        # condition = np.zeros((self.n_chars, self.dims[0], self.dims[1])).astype(np.float)
+        # # random indices of 
+        # condition_idxs = np.random.choice(self.n_chars, self.num_condition)
+        # condition[condition_idxs] = target[condition_idxs]
         
-        condition = condition.transpose(1, 2, 0)
-        target = target.transpose(1, 2, 0)
+        # condition = condition.transpose(1, 2, 0)
+        # target = target.transpose(1, 2, 0)
         
-        condition = torch.from_numpy(condition)
-        target = torch.from_numpy(target)
+        # condition = torch.from_numpy(condition)
+        # target = torch.from_numpy(target)
         
-        return condition, target, condition_idxs
+        # return condition, target, condition_idxs
 
     def __len__(self):
         return len(self.fonts)        
