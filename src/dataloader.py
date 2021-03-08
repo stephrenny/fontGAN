@@ -26,12 +26,10 @@ class FontDataset(Dataset):
     num_condition (int, tuple<int>): The number of characters to stack together as a condition
         If tuple, gives a low-high range for number of characters given
     """
-    def __init__(self, fonts_directory, num_condition=7, dims=(256,256), max_img_dim=128, n_chars=62, regular_only=False, src_corpus=None, tgt_corpus=None):
+    def __init__(self, fonts_directory, dims=(256,256), max_img_dim=128, regular_only=False, src_corpus=None, tgt_corpus=None):
         self.fonts_directory = fonts_directory
-        self.num_condition = num_condition
         self.dims = dims
         self.max_img_dim=128
-        self.n_chars = n_chars
         self.regular_only = regular_only
         self.src_corpus = src_corpus if src_corpus is not None else [['H', 'e-1', 'l-1', 'l-1', 'o-1']]
         self.tgt_corpus = tgt_corpus if tgt_corpus is not None else [['T', 'h-1', 'e-1', 'r-1', 'e-1']]
@@ -110,8 +108,12 @@ class FontDataset(Dataset):
         orig_font, cfg = self._shape_image(np.concatenate([char_images[key] for key in word], axis=1))
         condition, _ = self._shape_image(np.concatenate([rnd_char_images[key] for key in target_word], axis=1))
         target, _ = self._shape_image(np.concatenate([char_images[key] for key in target_word], axis=1), cfg)
+
+        orig_font = torch.from_numpy(1 - orig_font).unsqueeze(dim=0).float()
+        condition = torch.from_numpy(1 - condition).unsqueeze(dim=0).float()
+        target = torch.from_numpy(1 - target).unsqueeze(dim=0).float()
         
-        return 1 - orig_font, 1 - condition, 1 - target
+        return orig_font, condition, target
         
         # Sort the images by keys, turn into array
         # char_images = 1 - np.array([char_images[key] for key in sorted(list(char_images.keys()))]).astype(np.float) / 255

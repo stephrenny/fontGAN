@@ -43,13 +43,14 @@ class FontDiscriminator(nn.Module):
     hidden_dim: the inner dimension, a scalar
     '''
     def __init__(self, im_chan=2, hidden_dim=16):
-        super(Discriminator, self).__init__()
+        super(FontDiscriminator, self).__init__()
         self.disc = nn.Sequential(
             self.make_disc_block(im_chan, hidden_dim),
             self.make_disc_block(hidden_dim, hidden_dim * 2),
             self.make_disc_block(hidden_dim * 2, hidden_dim * 4),
             self.make_disc_block(hidden_dim * 4, 1, final_layer=True),
         )
+        self.fc = nn.Linear(49, 1) # TODO Make 49 non-magical
 
     def make_disc_block(self, input_channels, output_channels, kernel_size=4, stride=2, final_layer=False):
         '''
@@ -81,7 +82,7 @@ class FontDiscriminator(nn.Module):
             return nn.Sequential(
                 #### START CODE HERE #### #
                 nn.Conv2d(input_channels, output_channels, kernel_size=kernel_size, stride=stride),
-                nn.LeakyReLU(negative_slope=0.2)
+                nn.MaxPool2d(kernel_size=2),
                 #### END CODE HERE ####
             )
 
@@ -93,7 +94,8 @@ class FontDiscriminator(nn.Module):
             image: a flattened image tensor with dimension (im_dim)
         '''
         disc_pred = self.disc(image)
-        return disc_pred.view(len(disc_pred), -1)
+        disc_pred = disc_pred.view(len(disc_pred), -1)
+        return self.fc(disc_pred)
 
 class ContractingBlock(nn.Module):
     '''
@@ -212,7 +214,7 @@ class FeatureMapBlock(nn.Module):
 
 class FontGenerator(nn.Module):
     '''
-    UNet Class
+    FontGenerator Class
     A series of 4 contracting blocks followed by 4 expanding blocks to 
     transform an input image into the corresponding paired image, with an upfeature
     layer at the start and a downfeature layer at the end.
@@ -221,7 +223,7 @@ class FontGenerator(nn.Module):
         output_channels: the number of channels to expect for a given output
     '''
     def __init__(self, input_channels=2, output_channels=1, hidden_channels=16):
-        super(UNet, self).__init__()
+        super(FontGenerator, self).__init__()
         self.upfeature = FeatureMapBlock(input_channels, hidden_channels)
         self.contract1 = ContractingBlock(hidden_channels, use_dropout=True)
         self.contract2 = ContractingBlock(hidden_channels * 2, use_dropout=True)
