@@ -36,6 +36,8 @@ class FontDataset(Dataset):
 
         self.fonts = []
         for font_name in os.listdir(self.fonts_directory):
+            if font_name[0] == '.':
+                continue
             if regular_only and font_name.split('-')[-1] != 'Regular':
                 continue
             self.fonts.append(font_name)

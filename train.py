@@ -8,6 +8,8 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as sched
 import torch.utils.data as data
 import src.util as util
+import os
+import cv2
 
 from collections import OrderedDict
 from json import dumps
@@ -33,7 +35,7 @@ def main(args=None):
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--seed', type=int, default=236)
     parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--name', type=str)
+    parser.add_argument('--name', type=str, default='vanilla')
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--eval_steps', type=int, default=5000)
     parser.add_argument('--l2_wd', type=float, default=1.)
@@ -79,7 +81,11 @@ def main(args=None):
     dev_dataset = FontDataset(args.dev_dir) # Path
 
     train_loader = data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    dev_loader = data.DataLoader(dev_dataset, batch_size=1)
+    dev_loader = data.DataLoader(dev_dataset, batch_size=args.batch_size)
+
+    # Set up outputs folder
+    if not os.path.isdir('outputs/{}'.format(args.name)):
+        os.mkdir('outputs/{}'.format(args.name))
 
     step = 0
     steps_til_eval = args.eval_steps
@@ -99,7 +105,7 @@ def main(args=None):
                 gen_imgs = generator(x)
                 output_fake = torch.cat([gen_imgs, orig], dim=1) # Pass into discriminator: generated + original font
 
-                disc_pred = discriminator(torch.cat([output_real, output_fake], dim=0)).squeeze()
+                disc_pred = discriminator(torch.cat([output_real, output_fake], dim=0)).squeeze(dim=1)
                 disc_real = disc_pred[:curr_batch_size]
                 disc_fake = disc_pred[curr_batch_size:]
 
@@ -119,7 +125,7 @@ def main(args=None):
                 gen_optimizer.zero_grad()
                 gen_imgs = generator(x)
                 output_fake = torch.cat([gen_imgs, orig], dim=1)
-                disc_pred = discriminator(output_fake).squeeze()
+                disc_pred = discriminator(output_fake).squeeze(dim=1)
 
                 labels_fake = torch.ones_like(disc_fake)
 
@@ -128,13 +134,56 @@ def main(args=None):
                 gen_optimizer.step()
 
                 progress_bar.set_postfix(epoch=epoch, GenLoss=gen_loss.item())
-                tbx.add_scalar('train/GenLoss', gen_loss.item(), step)
+                tbx.add_scalar('train/GenLoss', gen_loss.item(), step)                    
 
-                step += 1
-                if step > 10:
-                    exit(0)
+                step += curr_batch_size
+
+        # Save generator outputs
+        save_outputs(gen_imgs, orig, condition, target, step, 'outputs/{}'.format(args.name))
+        log.info('Evaluating')
+        evaluate(generator, dev_loader, device, epoch, tbx)
+        epoch += 1
 
     return 0
+
+def save_outputs(gen_images, orig, condition, target, step, save_dir):
+    gen_imgs = gen_images.cpu().detach().squeeze(dim=1).numpy() * 255
+    orig_imgs = orig.cpu().detach().squeeze(dim=1).numpy() * 255
+    target_imgs = target.cpu().detach().squeeze(dim=1).numpy() * 255
+    condition_imgs = condition.cpu().detach().squeeze(dim=1).numpy() * 255
+
+    if not os.path.isdir(os.path.join(save_dir, 'step-{}'.format(step))):
+        os.mkdir(os.path.join(save_dir, 'step-{}'.format(step)))
+
+    idx = 0
+    for gen_img, orig_img, target_img, condition_img in zip(gen_imgs, orig_imgs, target_imgs, condition_imgs):
+        cv2.imwrite(os.path.join(save_dir, 'step-{}'.format(step), 'orig-' + str(idx) + '.jpg'), orig_img)
+        cv2.imwrite(os.path.join(save_dir, 'step-{}'.format(step), 'gen-' + str(idx) + '.jpg'), gen_img)
+        cv2.imwrite(os.path.join(save_dir, 'step-{}'.format(step), 'target-' + str(idx) + '.jpg'), target_img)
+        cv2.imwrite(os.path.join(save_dir, 'step-{}'.format(step), 'condition-' + str(idx) + '.jpg'), condition_img)
+        idx += 1
+
+def evaluate(gen, dataloader, device, epoch, tb):
+    gen.eval()
+    total_loss = 0
+    with torch.no_grad(), tqdm(total=len(dataloader.dataset)) as progress_bar:
+        for orig, condition, target in dataloader:
+            curr_batch_size = len(orig)
+            progress_bar.update(curr_batch_size)
+
+            orig = orig.to(device)
+            condition = condition.to(device)
+            target = target.to(device)
+
+            x = torch.cat([orig, condition], dim=1).to(device)
+            gen_imgs = gen(x)
+            total_loss += float((gen_imgs - target).abs().mean(dim=(1,2,3)).sum())
+
+    tb.add_scalar('dev/L1Loss', total_loss / len(dataloader))
+    print('L1: {}'.format(total_loss / len(dataloader)))
+    gen.train()
+
+
 
 if __name__ == '__main__':
     main()
