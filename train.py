@@ -34,17 +34,17 @@ def main(args=None):
     parser.add_argument('--save_dir', type=str, default='save')
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--seed', type=int, default=236)
-    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--name', type=str, default='vanilla')
-    parser.add_argument('--epochs', type=int, default=20)
-    parser.add_argument('--eval_steps', type=int, default=5000)
+    parser.add_argument('--epochs', type=int, default=120)
+    parser.add_argument('--eval_steps', type=int, default=2000)
     parser.add_argument('--l2_wd', type=float, default=1.)
 
     args = parser.parse_args()
 
     log = util.get_logger(args.save_dir, args.name)
 
-    tbx = SummaryWriter(args.save_dir)
+    tbx = SummaryWriter(util.get_save_dir(args.save_dir, args.name, training=True))
     device, args.gpu_ids = util.get_available_devices()
     args.batch_size *= max(1, len(args.gpu_ids))
 
@@ -84,6 +84,9 @@ def main(args=None):
     dev_loader = data.DataLoader(dev_dataset, batch_size=args.batch_size)
 
     # Set up outputs folder
+    if not os.path.isdir('outputs'):
+        os.mkdir('outputs')
+
     if not os.path.isdir('outputs/{}'.format(args.name)):
         os.mkdir('outputs/{}'.format(args.name))
 
@@ -91,29 +94,31 @@ def main(args=None):
     steps_til_eval = args.eval_steps
     epoch = step // len(train_dataset)
     while epoch < args.epochs:
-        log.info('Starting epoch {epoch}...')
+        log.info('Starting epoch {}...'.format(epoch))
+
+        epoch += 1
         with torch.enable_grad(), tqdm(total=len(train_loader.dataset)) as progress_bar:
             for orig, condition, target in train_loader:
                 curr_batch_size = len(orig)
                 progress_bar.update(curr_batch_size)
                 x = torch.cat([orig, condition], dim=1).to(device) # Pass into generator: original font + target text
-                output_real = torch.cat([target, orig], dim=1).to(device) # Pass into discriminator: target + original font
+                output_real = torch.cat([target, orig], dim=1).to(device) # To pass into discriminator: target + original font
                 orig = orig.to(device)
 
                 # Update discriminator
                 disc_optimizer.zero_grad()
                 gen_imgs = generator(x)
-                output_fake = torch.cat([gen_imgs, orig], dim=1) # Pass into discriminator: generated + original font
+                output_fake = torch.cat([gen_imgs, orig], dim=1) # To pass into discriminator: generated + original font
 
-                disc_pred = discriminator(torch.cat([output_real, output_fake], dim=0)).squeeze(dim=1)
-                disc_real = disc_pred[:curr_batch_size]
-                disc_fake = disc_pred[curr_batch_size:]
+                disc_pred = discriminator(torch.cat([output_real, output_fake], dim=0)).squeeze(dim=1) # shape = (batch_size,)
+                disc_real = disc_pred[:curr_batch_size] # First half is of the real images
+                disc_fake = disc_pred[curr_batch_size:] # Second half is of the fake images
 
                 labels_real = torch.ones_like(disc_real)
                 labels_fake = torch.zeros_like(disc_fake)
 
-                disc_real_loss = criterion(disc_real, labels_real)
-                disc_fake_loss = criterion(disc_fake, labels_fake)
+                disc_real_loss = criterion(disc_real, labels_real) # BCE Loss
+                disc_fake_loss = criterion(disc_fake, labels_fake) # BCE Loss
 
                 disc_loss = (disc_real_loss + disc_fake_loss) / 2
 
@@ -124,7 +129,7 @@ def main(args=None):
                 # Train generator
                 gen_optimizer.zero_grad()
                 gen_imgs = generator(x)
-                output_fake = torch.cat([gen_imgs, orig], dim=1)
+                output_fake = torch.cat([gen_imgs, orig], dim=1) # To pass into discriminator: generated + original font
                 disc_pred = discriminator(output_fake).squeeze(dim=1)
 
                 labels_fake = torch.ones_like(disc_fake)
@@ -138,15 +143,22 @@ def main(args=None):
 
                 step += curr_batch_size
 
-        # Save generator outputs
-        save_outputs(gen_imgs, orig, condition, target, step, 'outputs/{}'.format(args.name))
+                steps_til_eval -= curr_batch_size
+                if steps_til_eval <= 0:
+                    save_outputs(gen_imgs, orig, condition, target, step, 'outputs/{}/train'.format(args.name))
+                    steps_til_eval = args.eval_steps
+
+        # Save generator outputs and evaluate
         log.info('Evaluating')
-        evaluate(generator, dev_loader, device, epoch, tbx)
+        evaluate(generator, dev_loader, device, epoch, step, tbx, args.name)
         epoch += 1
 
     return 0
 
 def save_outputs(gen_images, orig, condition, target, step, save_dir):
+    if not os.path.isdir(save_dir):
+        os.mkdir(save_dir)
+
     gen_imgs = gen_images.cpu().detach().squeeze(dim=1).numpy() * 255
     orig_imgs = orig.cpu().detach().squeeze(dim=1).numpy() * 255
     target_imgs = target.cpu().detach().squeeze(dim=1).numpy() * 255
@@ -163,9 +175,10 @@ def save_outputs(gen_images, orig, condition, target, step, save_dir):
         cv2.imwrite(os.path.join(save_dir, 'step-{}'.format(step), 'condition-' + str(idx) + '.jpg'), condition_img)
         idx += 1
 
-def evaluate(gen, dataloader, device, epoch, tb):
+def evaluate(gen, dataloader, device, epoch, step, tb, name):
     gen.eval()
     total_loss = 0
+    saved = False
     with torch.no_grad(), tqdm(total=len(dataloader.dataset)) as progress_bar:
         for orig, condition, target in dataloader:
             curr_batch_size = len(orig)
@@ -179,7 +192,11 @@ def evaluate(gen, dataloader, device, epoch, tb):
             gen_imgs = gen(x)
             total_loss += float((gen_imgs - target).abs().mean(dim=(1,2,3)).sum())
 
-    tb.add_scalar('dev/L1Loss', total_loss / len(dataloader))
+            if not saved:
+                save_outputs(gen_imgs, orig, condition, target, step, 'outputs/{}/dev'.format(name))
+                saved = True
+
+    tb.add_scalar('dev/L1Loss', total_loss / len(dataloader), epoch)
     print('L1: {}'.format(total_loss / len(dataloader)))
     gen.train()
 
