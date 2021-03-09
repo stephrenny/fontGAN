@@ -4,6 +4,9 @@ Generative Adversarial Network to edit text in images while keeping the font and
 # Setup
 
 ## Create environment
+Create the conda environment with 
+
+`conda env create -f environment.yml`
 
 Activate the envionment with 
 
@@ -18,6 +21,12 @@ To pull the data and set up the project, run
 To train the neural network, simply activate the environment and run 
 
 `python train.py -name {my_model_name}`
+
+Training metrics will be logged using tensorboard. To view, run 
+
+`tensorboard --logdir save --port 5678`
+
+And connect to the specified port using ssh
 
 # View Dataset Exmaples
 
