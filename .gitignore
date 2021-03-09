@@ -132,3 +132,4 @@ dmypy.json
 save/
 data/
 outputs/
+notebooks/
