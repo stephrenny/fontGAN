@@ -28,12 +28,6 @@ def crop(image, new_shape):
     cropped_image = image[:, :, starting_height:final_height, starting_width:final_width]
     return cropped_image
 
-# class FontDiscriminator(nn.Module):
-#     def __init__(self, input_channels, hidden_dims):
-#         self.input_dims = input_dims
-
-# UNQ_C3 (UNIQUE CELL IDENTIFIER, DO NOT EDIT)
-# GRADED FUNCTION: Discriminator
 class FontDiscriminator(nn.Module):
     '''
     Discriminator Class
@@ -212,6 +206,66 @@ class FeatureMapBlock(nn.Module):
         x = self.conv(x)
         return x
 
+class DiscriminatorHead(nn.Module):
+    '''
+    Discriminator Class
+    Structured like the contracting path of the U-Net, the discriminator will
+    output a matrix of values classifying corresponding portions of the image as real or fake. 
+    Parameters:
+        input_channels: the number of image input channels
+        hidden_channels: the initial number of discriminator convolutional filters
+    '''
+    def __init__(self, input_channels=1, hidden_channels=8, out_features=64):
+        super(DiscriminatorHead, self).__init__()
+        self.upfeature = FeatureMapBlock(input_channels, hidden_channels)
+        self.contract1 = ContractingBlock(hidden_channels, use_bn=False)
+        self.contract2 = ContractingBlock(hidden_channels * 2)
+        self.contract3 = ContractingBlock(hidden_channels * 4)
+        self.contract4 = ContractingBlock(hidden_channels * 8)
+        #### START CODE HERE ####
+        self.final = nn.Conv2d(hidden_channels * 16, 1, kernel_size=1)
+        self.out = nn.Linear(256, out_features)
+        #### END CODE HERE ####
+
+    def forward(self, x):
+        x0 = self.upfeature(x)
+        x1 = self.contract1(x0)
+        x2 = self.contract2(x1)
+        x3 = self.contract3(x2)
+        x4 = self.contract4(x3)
+        xn = self.final(x4).squeeze()
+        xn = xn.view(len(xn), -1)
+        return self.out(xn)
+
+class DualHeadFontDiscriminator(nn.Module):
+    def __init__(self, input_channels=1, hidden_channels=8, out_features=32, hidden_features=64):
+        super(DualHeadFontDiscriminator, self).__init__()
+
+        self.head1 = nn.Sequential(
+            DiscriminatorHead(input_channels, hidden_channels, out_features),
+            nn.ReLU(),
+            )
+
+        self.head2 = nn.Sequential(
+            DiscriminatorHead(input_channels, hidden_channels, out_features),
+            nn.ReLU(),
+            )
+
+        self.out = nn.Sequential(
+            nn.Linear(out_features * 2 , hidden_features * 2),
+            nn.ReLU(),
+            nn.Linear(hidden_features * 2, hidden_features),
+            nn.ReLU(),
+            nn.Linear(hidden_features, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, y):        
+        x_feat = self.head1(x)
+        y_feat = self.head2(y)
+
+        return self.out(torch.cat([x_feat, y_feat], dim=1))
+
 class FontGenerator(nn.Module):
     '''
     FontGenerator Class
@@ -227,12 +281,12 @@ class FontGenerator(nn.Module):
         self.upfeature = FeatureMapBlock(input_channels, hidden_channels)
         self.contract1 = ContractingBlock(hidden_channels, use_dropout=True)
         self.contract2 = ContractingBlock(hidden_channels * 2, use_dropout=True)
-        self.contract3 = ContractingBlock(hidden_channels * 4) # Also use dropout if full network
+        self.contract3 = ContractingBlock(hidden_channels * 4, use_dropout=True)
         self.contract4 = ContractingBlock(hidden_channels * 8)
-        # self.contract5 = ContractingBlock(hidden_channels * 16)
-        # self.contract6 = ContractingBlock(hidden_channels * 32)
-        # self.expand0 = ExpandingBlock(hidden_channels * 64)
-        # self.expand1 = ExpandingBlock(hidden_channels * 32)
+        self.contract5 = ContractingBlock(hidden_channels * 16)
+        self.contract6 = ContractingBlock(hidden_channels * 32)
+        self.expand0 = ExpandingBlock(hidden_channels * 64)
+        self.expand1 = ExpandingBlock(hidden_channels * 32)
         self.expand2 = ExpandingBlock(hidden_channels * 16)
         self.expand3 = ExpandingBlock(hidden_channels * 8)
         self.expand4 = ExpandingBlock(hidden_channels * 4)
@@ -252,11 +306,11 @@ class FontGenerator(nn.Module):
         x2 = self.contract2(x1)
         x3 = self.contract3(x2)
         x4 = self.contract4(x3)
-        # x5 = self.contract5(x4)
-        # x6 = self.contract6(x5)
-        # x7 = self.expand0(x6, x5)
-        # x8 = self.expand1(x7, x4)
-        x9 = self.expand2(x4, x3)
+        x5 = self.contract5(x4)
+        x6 = self.contract6(x5)
+        x7 = self.expand0(x6, x5)
+        x8 = self.expand1(x7, x4)
+        x9 = self.expand2(x8, x3)
         x10 = self.expand3(x9, x2)
         x11 = self.expand4(x10, x1)
         x12 = self.expand5(x11, x0)

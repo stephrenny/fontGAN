@@ -29,7 +29,7 @@ class FontDataset(Dataset):
         If tuple, gives a low-high range for number of characters given
     """
 
-    def __init__(self, fonts_directory, dims=(256, 256), max_img_dim=128, regular_only=False, src_corpus=None, tgt_corpus=None):
+    def __init__(self, fonts_directory, dims=(256, 256), max_img_dim=128, regular_only=False, src_corpus=None, tgt_corpus=None, rand=False):
         self.fonts_directory = fonts_directory
         self.dims = dims
         self.max_img_dim = 128
@@ -38,6 +38,7 @@ class FontDataset(Dataset):
             ['H', 'e-1', 'l-1', 'l-1', 'o-1']]
         self.tgt_corpus = tgt_corpus if tgt_corpus is not None else [
             ['T', 'h-1', 'e-1', 'r-1', 'e-1']]
+        self.rand = rand
 
         self.fonts = []
         for font_name in os.listdir(self.fonts_directory):
@@ -81,14 +82,17 @@ class FontDataset(Dataset):
             scale = out_w * span / w
             new_h, new_w = int(h * scale), int(w * scale)
             start_h, start_w = np.random.randint(
-                0, out_h - new_h), np.random.randint(out_w - new_w)
+                0, max(1, out_h - new_h)), np.random.randint(0, max(1, out_w - new_w)) # We add max(1, _) in case out - new = 0
             cfg = start_h, start_w, scale
 
         h, w = image.shape
         start_h, start_w, scale = cfg
         # Scales for different fonts may get messed up
-        if w * scale + start_w > out_w:
+        if int(w * scale) + start_w > out_w:
             scale = (out_w - start_w) / w
+        if int(h * scale) + start_h > out_h:
+            scale = (out_h - start_h) / h
+
         new_h, new_w = int(h * scale), int(w * scale)
         out = np.ones((out_h, out_w)).astype(np.float)
         img = cv2.resize(image, (new_w, new_h))
@@ -118,8 +122,17 @@ class FontDataset(Dataset):
             [x for x in range(self.__len__()) if x != idx]))
 
         # TODO Change word and target word to randos
-        word = ['H', 'e-1', 'l-1', 'l-1', 'o-1']
-        target_word = ['T', 'h-1', 'e-1', 'r-1', 'e-1']
+        if self.rand:
+            word = [list(char_images.keys())[random.randint(62)] for _ in range(5)]
+            target_word = [list(rnd_char_images.keys())[random.randint(62)] for _ in range(5)]
+        else:
+            word = ['H', 'e-1', 'l-1', 'l-1', 'o-1']
+            target_word = ['T', 'h-1', 'e-1', 'r-1', 'e-1']
+
+        # Sanity Check
+        return torch.zeros(self.dims).unsqueeze(0), torch.ones(self.dims).unsqueeze(0), torch.zeros(self.dims).unsqueeze(0), torch.ones(self.dims).unsqueeze(0)
+
+
         orig_font, cfg = self._shape_image(np.concatenate(
             [char_images[key] for key in word], axis=1))
         condition, _ = self._shape_image(np.concatenate(

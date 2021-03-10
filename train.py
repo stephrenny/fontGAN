@@ -48,6 +48,7 @@ def main(args=None):
     parser.add_argument('--epochs', type=int, default=120)
     parser.add_argument('--eval_steps', type=int, default=2000)
     parser.add_argument('--l2_wd', type=float, default=1.)
+    parser.add_argument('--lambda_recon', type=float, default=.2)
 
     args = parser.parse_args()
 
@@ -107,7 +108,6 @@ def main(args=None):
     while epoch < args.epochs:
         log.info('Starting epoch {}...'.format(epoch))
 
-        epoch += 1
         with torch.enable_grad(), tqdm(total=len(train_loader.dataset)) as progress_bar:
             for orig, condition, target, false_target in train_loader:
                 curr_batch_size = len(orig)
@@ -146,8 +146,8 @@ def main(args=None):
                 disc_loss = (disc_real_loss + disc_fake_loss) / 2
 
                 disc_loss.backward(retain_graph=True)
-                tbx.add_scalar('train/DiscLoss', disc_loss.item(), step)
                 disc_optimizer.step()
+                tbx.add_scalar('train/DiscLoss', disc_loss.item(), step)
 
                 # Train generator
                 gen_optimizer.zero_grad()
@@ -157,9 +157,9 @@ def main(args=None):
                 disc_pred = discriminator(output_fake).squeeze(dim=1)
 
                 # We wish for the discrminator to mark these images as real
-                labels_fake = torch.ones_like(disc_fake)
+                labels_fake = torch.ones_like(disc_pred)
 
-                gen_loss = criterion(disc_pred, labels_fake)
+                gen_loss = criterion(disc_pred, labels_fake) + args.lambda_recon * recon_crit(gen_imgs, target.to(device))
                 gen_loss.backward()
                 gen_optimizer.step()
 
@@ -206,13 +206,18 @@ def save_outputs(gen_images, orig, condition, target, step, save_dir):
                                  'condition-' + str(idx) + '.jpg'), condition_img)
         idx += 1
 
+def recon_crit(generated, target):
+    return float((generated - target).abs().mean())
+
+def recon_crit2(generated, target):
+    return float(((generated - target) ** 2).mean())
 
 def evaluate(gen, dataloader, device, epoch, step, tb, name):
     gen.eval()
     total_loss = 0
     saved = False
     with torch.no_grad(), tqdm(total=len(dataloader.dataset)) as progress_bar:
-        for orig, condition, target in dataloader:
+        for orig, condition, target, _ in dataloader:
             curr_batch_size = len(orig)
             progress_bar.update(curr_batch_size)
 
