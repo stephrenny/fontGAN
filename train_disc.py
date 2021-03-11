@@ -16,13 +16,12 @@ from json import dumps
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from src.models.fontGAN import DualHeadFontDiscriminator
+from src.models.fontGAN import DualHeadFontDiscriminator, DiscResNet
 from src.dataloader import FontDataset
 
 """
 Sanity check for 
 """
-
 
 def load(model, cpk_file):
     pretrained_dict = torch.load(cpk_file)
@@ -68,13 +67,13 @@ def main(args=None):
 
     # Build Models
     log.info('Building model...')
-    discriminator = DualHeadFontDiscriminator()
+    discriminator = DiscResNet()
 
     discriminator = discriminator.to(device)
     discriminator.train()
 
     # Set criterion
-    criterion = F.binary_cross_entropy
+    criterion = nn.TripletMarginLoss(margin=4.8, p=2)
 
     # Get optimizer and scheduler
     disc_optimizer = optim.Adadelta(discriminator.parameters(), args.lr,
@@ -82,7 +81,7 @@ def main(args=None):
     disc_scheduler = sched.LambdaLR(disc_optimizer, lambda s: 1.)
 
     # Build dataset
-    train_dataset = FontDataset(args.train_dir)  # Path
+    train_dataset = FontDataset(args.train_dir, rand=True)  # Path
     dev_dataset = FontDataset(args.dev_dir)  # Path
 
     train_loader = data.DataLoader(
@@ -103,35 +102,37 @@ def main(args=None):
 
         with torch.enable_grad(), tqdm(total=len(train_loader.dataset)) as progress_bar:
             for orig, condition, target, false_target in train_loader:
+
                 curr_batch_size = len(orig)
                 progress_bar.update(curr_batch_size)
 
                 # To pass into discriminator: target + original font
-                head1 = torch.cat([target, false_target], dim=0).to(device)
-                head2 = torch.cat([orig, orig], dim=0).to(device)
+                orig = orig.to(device)
+                condition = condition.to(device)
+                target = target.to(device)
+                false_target = false_target.to(device)
 
                 # Update discriminator
                 disc_optimizer.zero_grad()
                 # To pass into discriminator: generated + original font
 
-                disc_pred = discriminator(head1, head2).squeeze(
-                    1)  # shape = (batch_size,)
-                # First [batch_size] images are of the real
-                disc_real = disc_pred[:curr_batch_size]
+                feats = discriminator(torch.cat([orig, target, false_target]))  # shape = (batch_size,)
+
+                orig_feats = feats[:curr_batch_size]
+                target_feats = feats[curr_batch_size:curr_batch_size * 2]
+                false_target_feats = feats[curr_batch_size*2:]
                 # Rest are of fake images
-                disc_fake = disc_pred[curr_batch_size:]
 
-                labels_real = torch.ones_like(disc_real)
-                labels_fake = torch.zeros_like(disc_fake)
+                # disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
+                # disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
 
-                disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
-                disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
+                # disc_loss = (disc_real_loss + disc_fake_loss) / 2
 
-                disc_loss = (disc_real_loss + disc_fake_loss) / 2
+                disc_loss = criterion(orig_feats, target_feats, false_target_feats)
 
                 disc_loss.backward()
                 disc_optimizer.step()
-                tbx.add_scalar('train/trainDiscBCELoss',
+                tbx.add_scalar('train/trainDiscTripLoss',
                                disc_loss.item(), step)
 
                 step += curr_batch_size
@@ -155,37 +156,38 @@ def evaluate(disc, dataloader, device, epoch, step, tb, name, criterion):
             progress_bar.update(curr_batch_size)
 
             # To pass into discriminator: target + original font
-            head1 = torch.cat([target, false_target], dim=0).to(device)
-            head2 = torch.cat([orig, orig], dim=0).to(device)
+            orig = orig.to(device)
+            target = target.to(device)
+            false_target = false_target.to(device)
 
-            disc_pred = disc(head1, head2).squeeze(1)  # shape = (batch_size,)
-            # First [batch_size] images are of the real
-            disc_real = disc_pred[:curr_batch_size]
+            # To pass into discriminator: generated + original font
+            feats = disc(torch.cat([orig, target, false_target]))  # shape = (batch_size,)
+
+            orig_feats = feats[:curr_batch_size]
+            target_feats = feats[curr_batch_size:curr_batch_size * 2]
+            false_target_feats = feats[curr_batch_size*2:]
             # Rest are of fake images
-            disc_fake = disc_pred[curr_batch_size:]
 
-            labels_real = torch.ones_like(disc_real)
-            labels_fake = torch.zeros_like(disc_fake)
+            # disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
+            # disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
 
-            disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
-            disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
+            # disc_loss = (disc_real_loss + disc_fake_loss) / 2
 
-            disc_loss = (disc_real_loss + disc_fake_loss) / 2
-
+            disc_loss = criterion(orig_feats, target_feats, false_target_feats)
             total_loss += disc_loss.item() * curr_batch_size
 
-            real_correct = torch.where(disc_real >= 0.5, torch.ones_like(
-                disc_real), torch.zeros_like(disc_real))
-            fake_correct = torch.where(disc_fake < 0.5, torch.ones_like(
-                disc_fake), torch.zeros_like(disc_fake))
+            real_correct = l2_dist(orig_feats, target_feats) <= 4.8
+            fake_correct = l2_dist(orig_feats, false_target_feats) > 4.8
             total_correct += real_correct.sum() + fake_correct.sum()
 
-    tb.add_scalar('dev/TrainDiscBCELoss', total_loss / len(dataloader), epoch)
+    tb.add_scalar('dev/TrainDiscTripLoss', total_loss / len(dataloader), epoch)
     tb.add_scalar('dev/TrainDiscAccuracy',
-                  total_correct / len(dataloader), epoch)
+                  total_correct / (len(dataloader) * 2), epoch)
 
     disc.train()
 
+def l2_dist(anchor, samples):
+    return torch.sqrt(((anchor - samples) ** 2).sum(dim=1))
 
 if __name__ == '__main__':
     main()

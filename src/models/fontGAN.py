@@ -289,20 +289,14 @@ class DualHeadFontDiscriminator(nn.Module):
 
 
 class DiscResNet(nn.Module):
-    def __init__(self, hidden_features=64):
-        self.head = models.resnet18(pretrained=True, n_classes=hidden_features)
+    def __init__(self, hidden_features=128):
+        super(DiscResNet, self).__init__()
+        self.head = models.resnet18(pretrained=False) # See if pretraining helps at all
+        num_ftrs = self.head.fc.in_features
+        self.head.fc = nn.Linear(num_ftrs, hidden_features)
 
-        self.out = nn.Sequential(
-            nn.Linear(hidden_features * 2, hidden_features),
-            nn.ReLU(),
-            nn.Linear(hidden_features, 2)
-        )
-
-    def forward(self, x, y):
-        x_feat = self.head(x)
-        y_feat = self.head(y)
-
-        return self.out(torch.cat([x_feat, y_feat], dim=1))
+    def forward(self, x):
+        return self.head(x)
 
 
 class FontGenerator(nn.Module):
