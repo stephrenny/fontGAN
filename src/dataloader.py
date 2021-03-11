@@ -61,15 +61,8 @@ class FontDataset(Dataset):
                                cv2.IMREAD_GRAYSCALE).astype(np.float) / 255
             h, w = image.shape
             image = image[:min(self.max_img_dim, h), :min(self.max_img_dim, w)]
-#             h, w = image.shape
-#             pad_h, pad_w = min(self.max_img_dim, h), min(self.max_img_dim, w)
 
-#             padded_image = np.ones(
-#                 (pad_h, pad_w)).astype(np.float)
-#             h_start, w_start = (pad_h - h) // 2, (pad_w - w) // 2
-#             padded_image[h_start:h_start + h, w_start: w_start + w] = image
-
-#             # Key = 'a', 'b', 'Z', '0', etc
+#            # Key = 'a-1', 'b-1', 'A', 'Z', 'zero', 'one', etc
             out[str(filename.split('.')[0])] = image
 
         return out
@@ -82,7 +75,7 @@ class FontDataset(Dataset):
             scale = out_w * span / w
             new_h, new_w = int(h * scale), int(w * scale)
             start_h, start_w = np.random.randint(
-                0, max(1, out_h - new_h)), np.random.randint(0, max(1, out_w - new_w)) # We add max(1, _) in case out - new = 0
+                0, max(1, out_h - new_h)), np.random.randint(0, max(1, out_w - new_w))  # We add max(1, _) in case out - new = 0
             cfg = start_h, start_w, scale
 
         h, w = image.shape
@@ -121,17 +114,17 @@ class FontDataset(Dataset):
         false_rnd_char_images = self._load_char_images(np.random.choice(
             [x for x in range(self.__len__()) if x != idx]))
 
-        # TODO Change word and target word to randos
         if self.rand:
-            word = [list(char_images.keys())[random.randint(62)] for _ in range(5)]
-            target_word = [list(rnd_char_images.keys())[random.randint(62)] for _ in range(5)]
+            word = [list(char_images.keys())[random.randint(62)]
+                    for _ in range(5)]
+            target_word = [list(rnd_char_images.keys())[
+                random.randint(62)] for _ in range(5)]
         else:
             word = ['H', 'e-1', 'l-1', 'l-1', 'o-1']
             target_word = ['T', 'h-1', 'e-1', 'r-1', 'e-1']
 
         # Sanity Check
         return torch.zeros(self.dims).unsqueeze(0), torch.ones(self.dims).unsqueeze(0), torch.zeros(self.dims).unsqueeze(0), torch.ones(self.dims).unsqueeze(0)
-
 
         orig_font, cfg = self._shape_image(np.concatenate(
             [char_images[key] for key in word], axis=1))

@@ -159,7 +159,8 @@ def main(args=None):
                 # We wish for the discrminator to mark these images as real
                 labels_fake = torch.ones_like(disc_pred)
 
-                gen_loss = criterion(disc_pred, labels_fake) + args.lambda_recon * recon_crit(gen_imgs, target.to(device))
+                gen_loss = criterion(
+                    disc_pred, labels_fake) + args.lambda_recon * recon_crit(gen_imgs, target.to(device))
                 gen_loss.backward()
                 gen_optimizer.step()
 
@@ -206,11 +207,14 @@ def save_outputs(gen_images, orig, condition, target, step, save_dir):
                                  'condition-' + str(idx) + '.jpg'), condition_img)
         idx += 1
 
+
 def recon_crit(generated, target):
     return float((generated - target).abs().mean())
 
+
 def recon_crit2(generated, target):
     return float(((generated - target) ** 2).mean())
+
 
 def evaluate(gen, dataloader, device, epoch, step, tb, name):
     gen.eval()

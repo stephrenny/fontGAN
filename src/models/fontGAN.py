@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from tqdm.auto import tqdm
-from torchvision import transforms
+from torchvision import transforms, models
 import numpy as np
 
 torch.manual_seed(36)
@@ -10,6 +10,7 @@ np.random.seed(36)
 """
 Borrowing a lot of code from Assigments (Pix2Pix for Generator, DCGan for Discriminator)
 """
+
 
 def crop(image, new_shape):
     '''
@@ -25,8 +26,10 @@ def crop(image, new_shape):
     final_height = starting_height + new_shape[2]
     starting_width = middle_width - round(new_shape[3] / 2)
     final_width = starting_width + new_shape[3]
-    cropped_image = image[:, :, starting_height:final_height, starting_width:final_width]
+    cropped_image = image[:, :, starting_height:final_height,
+                          starting_width:final_width]
     return cropped_image
+
 
 class FontDiscriminator(nn.Module):
     '''
@@ -36,6 +39,7 @@ class FontDiscriminator(nn.Module):
               (MNIST is black-and-white, so 1 channel is your default)
     hidden_dim: the inner dimension, a scalar
     '''
+
     def __init__(self, im_chan=2, hidden_dim=16):
         super(FontDiscriminator, self).__init__()
         self.disc = nn.Sequential(
@@ -44,7 +48,7 @@ class FontDiscriminator(nn.Module):
             self.make_disc_block(hidden_dim * 2, hidden_dim * 4),
             self.make_disc_block(hidden_dim * 4, 1, final_layer=True),
         )
-        self.fc = nn.Linear(49, 1) # TODO Make 49 non-magical
+        self.fc = nn.Linear(49, 1)  # TODO Make 49 non-magical
 
     def make_disc_block(self, input_channels, output_channels, kernel_size=4, stride=2, final_layer=False):
         '''
@@ -62,20 +66,22 @@ class FontDiscriminator(nn.Module):
         #       1) Add a convolutional layer using the given parameters.
         #       2) Do a batchnorm, except for the last layer.
         #       3) Follow each batchnorm with a LeakyReLU activation with slope 0.2.
-        
+
         # Build the neural block
         if not final_layer:
             return nn.Sequential(
                 #### START CODE HERE #### #
-                nn.Conv2d(input_channels, output_channels, kernel_size=kernel_size, stride=stride),
+                nn.Conv2d(input_channels, output_channels,
+                          kernel_size=kernel_size, stride=stride),
                 nn.BatchNorm2d(output_channels),
                 nn.LeakyReLU(negative_slope=0.2)
                 #### END CODE HERE ####
             )
-        else: # Final Layer
+        else:  # Final Layer
             return nn.Sequential(
                 #### START CODE HERE #### #
-                nn.Conv2d(input_channels, output_channels, kernel_size=kernel_size, stride=stride),
+                nn.Conv2d(input_channels, output_channels,
+                          kernel_size=kernel_size, stride=stride),
                 nn.MaxPool2d(kernel_size=2),
                 #### END CODE HERE ####
             )
@@ -91,6 +97,7 @@ class FontDiscriminator(nn.Module):
         disc_pred = disc_pred.view(len(disc_pred), -1)
         return self.fc(disc_pred)
 
+
 class ContractingBlock(nn.Module):
     '''
     ContractingBlock Class
@@ -98,10 +105,13 @@ class ContractingBlock(nn.Module):
     Values:
         input_channels: the number of channels to expect from a given input
     '''
+
     def __init__(self, input_channels, use_dropout=False, use_bn=True):
         super(ContractingBlock, self).__init__()
-        self.conv1 = nn.Conv2d(input_channels, input_channels * 2, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(input_channels * 2, input_channels * 2, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(
+            input_channels, input_channels * 2, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(
+            input_channels * 2, input_channels * 2, kernel_size=3, padding=1)
         self.activation = nn.LeakyReLU(0.2)
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
         if use_bn:
@@ -133,6 +143,7 @@ class ContractingBlock(nn.Module):
         x = self.maxpool(x)
         return x
 
+
 class ExpandingBlock(nn.Module):
     '''
     ExpandingBlock Class:
@@ -141,12 +152,17 @@ class ExpandingBlock(nn.Module):
     Values:
         input_channels: the number of channels to expect from a given input
     '''
+
     def __init__(self, input_channels, use_dropout=False, use_bn=True):
         super(ExpandingBlock, self).__init__()
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.conv1 = nn.Conv2d(input_channels, input_channels // 2, kernel_size=2)
-        self.conv2 = nn.Conv2d(input_channels, input_channels // 2, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(input_channels // 2, input_channels // 2, kernel_size=2, padding=1)
+        self.upsample = nn.Upsample(
+            scale_factor=2, mode='bilinear', align_corners=True)
+        self.conv1 = nn.Conv2d(
+            input_channels, input_channels // 2, kernel_size=2)
+        self.conv2 = nn.Conv2d(
+            input_channels, input_channels // 2, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(input_channels // 2,
+                               input_channels // 2, kernel_size=2, padding=1)
         if use_bn:
             self.batchnorm = nn.BatchNorm2d(input_channels // 2)
         self.use_bn = use_bn
@@ -182,6 +198,7 @@ class ExpandingBlock(nn.Module):
         x = self.activation(x)
         return x
 
+
 class FeatureMapBlock(nn.Module):
     '''
     FeatureMapBlock Class
@@ -192,6 +209,7 @@ class FeatureMapBlock(nn.Module):
         input_channels: the number of channels to expect from a given input
         output_channels: the number of channels to expect for a given output
     '''
+
     def __init__(self, input_channels, output_channels):
         super(FeatureMapBlock, self).__init__()
         self.conv = nn.Conv2d(input_channels, output_channels, kernel_size=1)
@@ -206,6 +224,7 @@ class FeatureMapBlock(nn.Module):
         x = self.conv(x)
         return x
 
+
 class DiscriminatorHead(nn.Module):
     '''
     Discriminator Class
@@ -215,6 +234,7 @@ class DiscriminatorHead(nn.Module):
         input_channels: the number of image input channels
         hidden_channels: the initial number of discriminator convolutional filters
     '''
+
     def __init__(self, input_channels=1, hidden_channels=8, out_features=64):
         super(DiscriminatorHead, self).__init__()
         self.upfeature = FeatureMapBlock(input_channels, hidden_channels)
@@ -237,6 +257,7 @@ class DiscriminatorHead(nn.Module):
         xn = xn.view(len(xn), -1)
         return self.out(xn)
 
+
 class DualHeadFontDiscriminator(nn.Module):
     def __init__(self, input_channels=1, hidden_channels=8, out_features=32, hidden_features=64):
         super(DualHeadFontDiscriminator, self).__init__()
@@ -244,15 +265,15 @@ class DualHeadFontDiscriminator(nn.Module):
         self.head1 = nn.Sequential(
             DiscriminatorHead(input_channels, hidden_channels, out_features),
             nn.ReLU(),
-            )
+        )
 
         self.head2 = nn.Sequential(
             DiscriminatorHead(input_channels, hidden_channels, out_features),
             nn.ReLU(),
-            )
+        )
 
         self.out = nn.Sequential(
-            nn.Linear(out_features * 2 , hidden_features * 2),
+            nn.Linear(out_features * 2, hidden_features * 2),
             nn.ReLU(),
             nn.Linear(hidden_features * 2, hidden_features),
             nn.ReLU(),
@@ -260,11 +281,29 @@ class DualHeadFontDiscriminator(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, x, y):        
+    def forward(self, x, y):
         x_feat = self.head1(x)
         y_feat = self.head2(y)
 
         return self.out(torch.cat([x_feat, y_feat], dim=1))
+
+
+class DiscResNet(nn.Module):
+    def __init__(self, hidden_features=64):
+        self.head = models.resnet18(pretrained=True, n_classes=hidden_features)
+
+        self.out = nn.Sequential(
+            nn.Linear(hidden_features * 2, hidden_features),
+            nn.ReLU(),
+            nn.Linear(hidden_features, 2)
+        )
+
+    def forward(self, x, y):
+        x_feat = self.head(x)
+        y_feat = self.head(y)
+
+        return self.out(torch.cat([x_feat, y_feat], dim=1))
+
 
 class FontGenerator(nn.Module):
     '''
@@ -276,12 +315,15 @@ class FontGenerator(nn.Module):
         input_channels: the number of channels to expect from a given input
         output_channels: the number of channels to expect for a given output
     '''
+
     def __init__(self, input_channels=2, output_channels=1, hidden_channels=16):
         super(FontGenerator, self).__init__()
         self.upfeature = FeatureMapBlock(input_channels, hidden_channels)
         self.contract1 = ContractingBlock(hidden_channels, use_dropout=True)
-        self.contract2 = ContractingBlock(hidden_channels * 2, use_dropout=True)
-        self.contract3 = ContractingBlock(hidden_channels * 4, use_dropout=True)
+        self.contract2 = ContractingBlock(
+            hidden_channels * 2, use_dropout=True)
+        self.contract3 = ContractingBlock(
+            hidden_channels * 4, use_dropout=True)
         self.contract4 = ContractingBlock(hidden_channels * 8)
         self.contract5 = ContractingBlock(hidden_channels * 16)
         self.contract6 = ContractingBlock(hidden_channels * 32)

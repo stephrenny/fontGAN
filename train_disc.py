@@ -20,7 +20,7 @@ from src.models.fontGAN import DualHeadFontDiscriminator
 from src.dataloader import FontDataset
 
 """
-Much of the training harness is recycled from the cs244n squad program
+Sanity check for 
 """
 
 
@@ -114,7 +114,8 @@ def main(args=None):
                 disc_optimizer.zero_grad()
                 # To pass into discriminator: generated + original font
 
-                disc_pred = discriminator(head1, head2).squeeze(1)  # shape = (batch_size,)
+                disc_pred = discriminator(head1, head2).squeeze(
+                    1)  # shape = (batch_size,)
                 # First [batch_size] images are of the real
                 disc_real = disc_pred[:curr_batch_size]
                 # Rest are of fake images
@@ -130,16 +131,19 @@ def main(args=None):
 
                 disc_loss.backward()
                 disc_optimizer.step()
-                tbx.add_scalar('train/trainDiscBCELoss', disc_loss.item(), step)
+                tbx.add_scalar('train/trainDiscBCELoss',
+                               disc_loss.item(), step)
 
                 step += curr_batch_size
 
         # Save generator outputs and evaluate
         log.info('Evaluating')
-        evaluate(discriminator, dev_loader, device, epoch, step, tbx, args.name, criterion)
+        evaluate(discriminator, dev_loader, device,
+                 epoch, step, tbx, args.name, criterion)
         epoch += 1
 
     return 0
+
 
 def evaluate(disc, dataloader, device, epoch, step, tb, name, criterion):
     disc.eval()
@@ -170,14 +174,18 @@ def evaluate(disc, dataloader, device, epoch, step, tb, name, criterion):
 
             total_loss += disc_loss.item() * curr_batch_size
 
-            real_correct = torch.where(disc_real >= 0.5, torch.ones_like(disc_real), torch.zeros_like(disc_real))
-            fake_correct = torch.where(disc_fake < 0.5, torch.ones_like(disc_fake), torch.zeros_like(disc_fake))
+            real_correct = torch.where(disc_real >= 0.5, torch.ones_like(
+                disc_real), torch.zeros_like(disc_real))
+            fake_correct = torch.where(disc_fake < 0.5, torch.ones_like(
+                disc_fake), torch.zeros_like(disc_fake))
             total_correct += real_correct.sum() + fake_correct.sum()
 
     tb.add_scalar('dev/TrainDiscBCELoss', total_loss / len(dataloader), epoch)
-    tb.add_scalar('dev/TrainDiscAccuracy', total_correct / len(dataloader), epoch)
+    tb.add_scalar('dev/TrainDiscAccuracy',
+                  total_correct / len(dataloader), epoch)
 
     disc.train()
+
 
 if __name__ == '__main__':
     main()
