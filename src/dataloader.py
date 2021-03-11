@@ -29,7 +29,7 @@ class FontDataset(Dataset):
         If tuple, gives a low-high range for number of characters given
     """
 
-    def __init__(self, fonts_directory, dims=(256, 256, 3), max_img_dim=128, regular_only=False, src_corpus=None, tgt_corpus=None, rand=False):
+    def __init__(self, fonts_directory, dims=(256, 256), max_img_dim=128, regular_only=False, src_corpus=None, tgt_corpus=None, rand=False):
         self.fonts_directory = fonts_directory
         self.dims = dims
         self.max_img_dim = 128
@@ -57,9 +57,9 @@ class FontDataset(Dataset):
             if filename[0] == '.':
                 continue
             max_h, max_w = self.max_img_dim, self.max_img_dim
-            image = cv2.imread(os.path.join(char_dir, filename)).astype(np.float) / 255
-            h, w , c = image.shape
-            image = image[:min(self.max_img_dim, h), :min(self.max_img_dim, w), :]
+            image = cv2.imread(os.path.join(char_dir, filename), cv2.IMREAD_GRAYSCALE).astype(np.float) / 255
+            h, w = image.shape
+            image = image[:min(self.max_img_dim, h), :min(self.max_img_dim, w)]
 
 #            # Key = 'a-1', 'b-1', 'A', 'Z', 'zero', 'one', etc
             out[str(filename.split('.')[0])] = image
@@ -67,9 +67,9 @@ class FontDataset(Dataset):
         return out
 
     def _shape_image(self, image, cfg=None):
-        out_h, out_w, out_c = self.dims
+        out_h, out_w = self.dims
         if cfg is None:
-            h, w, c = image.shape
+            h, w = image.shape
             span = np.random.uniform(0.5, 1)
             scale = out_w * span / w
             new_h, new_w = int(h * scale), int(w * scale)
@@ -77,7 +77,7 @@ class FontDataset(Dataset):
                 0, max(1, out_h - new_h)), np.random.randint(0, max(1, out_w - new_w))  # We add max(1, _) in case out - new = 0
             cfg = start_h, start_w, scale
 
-        h, w, c = image.shape
+        h, w = image.shape
         start_h, start_w, scale = cfg
         # Scales for different fonts may get messed up
         if int(w * scale) + start_w > out_w:
@@ -86,9 +86,9 @@ class FontDataset(Dataset):
             scale = (out_h - start_h) / h
 
         new_h, new_w = int(h * scale), int(w * scale)
-        out = np.ones((out_h, out_w, out_c)).astype(np.float)
+        out = np.ones((out_h, out_w)).astype(np.float)
         img = cv2.resize(image, (new_w, new_h))
-        out[start_h: start_h + new_h, start_w: start_w + new_w, :] = img
+        out[start_h: start_h + new_h, start_w: start_w + new_w] = img
         return out, cfg
 
         # if w <= self.dims[1]:
@@ -128,7 +128,7 @@ class FontDataset(Dataset):
         orig_font, cfg = self._shape_image(np.concatenate(
             [char_images[key] for key in word], axis=1))
         condition, _ = self._shape_image(np.concatenate(
-            [rnd_char_images[key] for key in target_word], axis=1))
+            [rnd_char_images[key] for key in target_word], axis=1), cfg) # Have cfg here to help disc... would rather not though
         target, _ = self._shape_image(np.concatenate(
             [char_images[key] for key in target_word], axis=1), cfg)
         false_target, _ = self._shape_image(np.concatenate(
@@ -139,9 +139,8 @@ class FontDataset(Dataset):
         target = torch.from_numpy(1 - target).float()
         false_target = torch.from_numpy(1 - false_target).float()
 
-        # # TODO generate 'fake' fonts
-
-        return orig_font.permute(2, 0, 1), condition.permute(2,0,1), target.permute(2,0,1), false_target.permute(2,0,1)
+        # Shape (1, self.dims[0], self.dims[1])
+        return orig_font.unsqueeze(0), condition.unsqueeze(0), target.unsqueeze(0), false_target.unsqueeze(0)
 
     def __len__(self):
         return len(self.fonts)

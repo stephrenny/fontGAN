@@ -48,15 +48,32 @@ def main(args=None):
     parser.add_argument('--eval_steps', type=int, default=2000)
     parser.add_argument('--l2_wd', type=float, default=1.)
     parser.add_argument('--lambda_recon', type=float, default=.2)
+    parser.add_argument('--mode', type=str, default='style')
+    parser.add_argument('--metric_name', type=str, default='dev_loss')
+    parser.add_argument('--maximize_metric', action='store_true')
+    parser.add_argument('--max_checkpoints', type=int, default=2)
+    parser.add_argument('--load_path', type=str)
+    parser.add_argument('--resume_step', action='store_true')
+    parser.add_argument('--no_save', action='store_true')
 
     args = parser.parse_args()
 
     log = util.get_logger(args.save_dir, args.name)
 
-    tbx = SummaryWriter(util.get_save_dir(
-        args.save_dir, args.name, training=True))
+    save_dir = util.get_save_dir(
+        args.save_dir, args.name, training=True)
+
+    tbx = SummaryWriter(save_dir)
     device, args.gpu_ids = util.get_available_devices()
     args.batch_size *= max(1, len(args.gpu_ids))
+
+    step = 0
+
+    saver = util.CheckpointSaver(save_dir,
+                                 max_checkpoints=args.max_checkpoints,
+                                 metric_name=args.metric_name,
+                                 maximize_metric=args.maximize_metric,
+                                 log=log)
 
     # Set random seed
     log.info(f'Using random seed {args.seed}...')
@@ -68,6 +85,12 @@ def main(args=None):
     # Build Models
     log.info('Building model...')
     discriminator = DiscResNet()
+    if args.load_path:
+        log.info(f'Loading checkpoint from {args.load_path}...')
+        discriminator, step = util.load_model(discriminator, args.load_path, args.gpu_ids, return_step=True)
+
+        if not args.resume_step:
+            step = 0
 
     discriminator = discriminator.to(device)
     discriminator.train()
@@ -82,20 +105,19 @@ def main(args=None):
 
     # Build dataset
     train_dataset = FontDataset(args.train_dir, rand=True)  # Path
-    dev_dataset = FontDataset(args.dev_dir)  # Path
+    dev_dataset = FontDataset(args.dev_dir, rand=True)  # Path
 
     train_loader = data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True)
     dev_loader = data.DataLoader(dev_dataset, batch_size=args.batch_size)
 
     # Set up outputs folder
-    if not os.path.isdir('outputs'):
-        os.mkdir('outputs')
+    # if not os.path.isdir('outputs'):
+    #     os.mkdir('outputs')
 
-    if not os.path.isdir('outputs/{}'.format(args.name)):
-        os.mkdir('outputs/{}'.format(args.name))
+    # if not os.path.isdir('outputs/{}'.format(args.name)):
+    #     os.mkdir('outputs/{}'.format(args.name))
 
-    step = 0
     epoch = step // len(train_dataset)
     while epoch < args.epochs:
         log.info('Starting epoch {}...'.format(epoch))
@@ -116,37 +138,40 @@ def main(args=None):
                 disc_optimizer.zero_grad()
                 # To pass into discriminator: generated + original font
 
-                feats = discriminator(torch.cat([orig, target, false_target]))  # shape = (batch_size,)
+                if args.mode == 'style':
+                    # Train discriminator to match style (font)
+                    x = torch.cat([orig, target, false_target], dim=0)
+                else:
+                    # Train discrminiator to match content (orig is odd one out in this case)
+                    x = torch.cat([condition, target, orig], dim=0)
 
-                orig_feats = feats[:curr_batch_size]
-                target_feats = feats[curr_batch_size:curr_batch_size * 2]
-                false_target_feats = feats[curr_batch_size*2:]
-                # Rest are of fake images
+                feats = discriminator(x)  # shape = (batch_size, hidden_size)
 
-                # disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
-                # disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
+                anchor = feats[:curr_batch_size]
+                positive = feats[curr_batch_size:curr_batch_size * 2]
+                negative = feats[curr_batch_size*2:]
 
-                # disc_loss = (disc_real_loss + disc_fake_loss) / 2
-
-                disc_loss = criterion(orig_feats, target_feats, false_target_feats)
+                disc_loss = criterion(anchor, positive, negative)
 
                 disc_loss.backward()
                 disc_optimizer.step()
-                tbx.add_scalar('train/trainDiscTripLoss',
-                               disc_loss.item(), step)
+                tbx.add_scalar('train/trainDiscTripLoss', disc_loss.item(), step)
 
                 step += curr_batch_size
 
         # Save generator outputs and evaluate
         log.info('Evaluating')
-        evaluate(discriminator, dev_loader, device,
-                 epoch, step, tbx, args.name, criterion)
+        metrics = evaluate(discriminator, dev_loader, device, criterion, args.mode)
+        tbx.add_scalar('dev/TrainDiscTripLoss', metrics['dev_loss'], epoch)
+        tbx.add_scalar('dev/TrainDiscAccuracy', metrics['dev_acc'], epoch)
+
+        if not args.no_save:
+            saver.save(step, discriminator, metrics[args.metric_name], device)
         epoch += 1
 
     return 0
 
-
-def evaluate(disc, dataloader, device, epoch, step, tb, name, criterion):
+def evaluate(disc, dataloader, device, criterion, mode):
     disc.eval()
     total_loss = 0
     total_correct = 0
@@ -158,33 +183,33 @@ def evaluate(disc, dataloader, device, epoch, step, tb, name, criterion):
             # To pass into discriminator: target + original font
             orig = orig.to(device)
             target = target.to(device)
+            condition = condition.to(device)
             false_target = false_target.to(device)
 
-            # To pass into discriminator: generated + original font
-            feats = disc(torch.cat([orig, target, false_target]))  # shape = (batch_size,)
+            if mode == 'style':
+                # Train discriminator to match style (font)
+                x = torch.cat([orig, target, false_target], dim=0)
+            else:
+                # Train discrminiator to match content (orig is odd one out in this case)
+                x = torch.cat([condition, target, orig], dim=0)
 
-            orig_feats = feats[:curr_batch_size]
-            target_feats = feats[curr_batch_size:curr_batch_size * 2]
-            false_target_feats = feats[curr_batch_size*2:]
+            feats = disc(x)  # shape = (batch_size, hidden_size)
+
+            anchor = feats[:curr_batch_size]
+            positive = feats[curr_batch_size:curr_batch_size * 2]
+            negative = feats[curr_batch_size*2:]
             # Rest are of fake images
 
-            # disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
-            # disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
-
-            # disc_loss = (disc_real_loss + disc_fake_loss) / 2
-
-            disc_loss = criterion(orig_feats, target_feats, false_target_feats)
+            disc_loss = criterion(anchor, positive, negative)
             total_loss += disc_loss.item() * curr_batch_size
 
-            real_correct = l2_dist(orig_feats, target_feats) <= 4.8
-            fake_correct = l2_dist(orig_feats, false_target_feats) > 4.8
-            total_correct += real_correct.sum() + fake_correct.sum()
-
-    tb.add_scalar('dev/TrainDiscTripLoss', total_loss / len(dataloader), epoch)
-    tb.add_scalar('dev/TrainDiscAccuracy',
-                  total_correct / (len(dataloader) * 2), epoch)
+            real_correct = l2_dist(anchor, positive) <= 4.8
+            fake_correct = l2_dist(anchor, negative) > 4.8
+            total_correct += real_correct.sum().float() + fake_correct.sum().float()
 
     disc.train()
+
+    return {'dev_loss': total_loss / len(dataloader.dataset), 'dev_acc': total_correct / (len(dataloader.dataset) * 2)}
 
 def l2_dist(anchor, samples):
     return torch.sqrt(((anchor - samples) ** 2).sum(dim=1))
