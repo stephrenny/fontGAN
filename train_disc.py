@@ -16,7 +16,7 @@ from json import dumps
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from src.models.fontGAN import DualHeadFontDiscriminator, DiscResNet
+from src.models.fontGAN import DualHeadFontDiscriminator, DiscResNet, ResnetGenerator
 from src.dataloader import FontDataset
 
 """
@@ -30,7 +30,6 @@ def load(model, cpk_file):
                        v in pretrained_dict.items() if k in model_dict}
     model_dict.update(pretrained_dict)
     model.load_state_dict(model_dict)
-
 
 def main(args=None):
     parser = argparse.ArgumentParser(description="FontGAN pytorch.")
@@ -57,6 +56,9 @@ def main(args=None):
     parser.add_argument('--no_save', action='store_true')
 
     args = parser.parse_args()
+
+    generator = ResnetGenerator()
+    exit(0)
 
     log = util.get_logger(args.save_dir, args.name)
 
@@ -107,8 +109,7 @@ def main(args=None):
     train_dataset = FontDataset(args.train_dir, rand=True)  # Path
     dev_dataset = FontDataset(args.dev_dir, rand=True)  # Path
 
-    train_loader = data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True)
+    train_loader = data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     dev_loader = data.DataLoader(dev_dataset, batch_size=args.batch_size)
 
     # Set up outputs folder

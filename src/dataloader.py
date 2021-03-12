@@ -29,7 +29,7 @@ class FontDataset(Dataset):
         If tuple, gives a low-high range for number of characters given
     """
 
-    def __init__(self, fonts_directory, dims=(256, 256), max_img_dim=128, regular_only=False, src_corpus=None, tgt_corpus=None, rand=False):
+    def __init__(self, fonts_directory, dims=(128, 128), max_img_dim=128, regular_only=False, src_corpus=None, tgt_corpus=None, rand=False):
         self.fonts_directory = fonts_directory
         self.dims = dims
         self.max_img_dim = 128
@@ -70,7 +70,8 @@ class FontDataset(Dataset):
         out_h, out_w = self.dims
         if cfg is None:
             h, w = image.shape
-            span = np.random.uniform(0.5, 1)
+#             span = np.random.uniform(0.5, 1)
+            span = 1
             scale = out_w * span / w
             new_h, new_w = int(h * scale), int(w * scale)
             start_h, start_w = np.random.randint(
@@ -114,10 +115,15 @@ class FontDataset(Dataset):
             [x for x in range(self.__len__()) if x != idx]))
 
         if self.rand:
-            word = [list(char_images.keys())[np.random.randint(62)]
-                    for _ in range(5)]
-            target_word = [list(rnd_char_images.keys())[
-                np.random.randint(62)] for _ in range(5)]
+#             word = [list(char_images.keys())[np.random.randint(62)]
+#                     for _ in range(1)]
+#             target_word = [list(rnd_char_images.keys())[
+#                 np.random.randint(62)] for _ in range(1)]
+    
+            a, b = np.random.choice(62, size=2, replace=False)
+            word = [list(char_images.keys())[a]]
+            target_word = [list(char_images.keys())[b]]
+        
         else:
             word = ['H', 'e-1', 'l-1', 'l-1', 'o-1']
             target_word = ['T', 'h-1', 'e-1', 'r-1', 'e-1']
