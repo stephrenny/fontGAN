@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torch.optim.lr_scheduler as sched
 import torch.utils.data as data
 import src.util as util
 import os
@@ -16,7 +15,7 @@ from json import dumps
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from src.models.fontGAN import FontGenerator, FontDiscriminator
+from src.models.fontGAN import DiscResNet, ResnetGenerator
 from src.dataloader import FontDataset
 
 """
@@ -43,21 +42,38 @@ def main(args=None):
     parser.add_argument('--save_dir', type=str, default='save')
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--seed', type=int, default=236)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=5e-4)
     parser.add_argument('--name', type=str, default='vanilla')
     parser.add_argument('--epochs', type=int, default=120)
-    parser.add_argument('--eval_steps', type=int, default=2000)
     parser.add_argument('--l2_wd', type=float, default=1.)
     parser.add_argument('--lambda_recon', type=float, default=.2)
+    parser.add_argument('--mode', type=str, default='style')
+    parser.add_argument('--metric_name', type=str, default='disc_style_acc')
+    parser.add_argument('--maximize_metric', action='store_true')
+    parser.add_argument('--max_checkpoints', type=int, default=2)
+    parser.add_argument('--load_path', type=str)
+    parser.add_argument('--resume_step', action='store_true')
+    parser.add_argument('--no_save', action='store_true')
+    parser.add_argument('--skip_epochs', type=int)
 
     args = parser.parse_args()
 
     log = util.get_logger(args.save_dir, args.name)
 
-    tbx = SummaryWriter(util.get_save_dir(
-        args.save_dir, args.name, training=True))
+    save_dir = util.get_save_dir(
+        args.save_dir, args.name, training=True)
+
+    tbx = SummaryWriter(save_dir)
     device, args.gpu_ids = util.get_available_devices()
     args.batch_size *= max(1, len(args.gpu_ids))
+
+    step = 0
+
+    saver = util.CheckpointSaver(save_dir,
+                                 max_checkpoints=args.max_checkpoints,
+                                 metric_name=args.metric_name,
+                                 maximize_metric=args.maximize_metric,
+                                 log=log)
 
     # Set random seed
     log.info(f'Using random seed {args.seed}...')
@@ -67,29 +83,41 @@ def main(args=None):
     torch.cuda.manual_seed_all(args.seed)
 
     # Build Models
-    log.info('Building model...')
-    generator = FontGenerator()
-    discriminator = FontDiscriminator()
+    log.info('Building models...')
+    style_discriminator = DiscResNet()
+    content_discriminator = DiscResNet()
+    generator = ResnetGenerator()
 
+    step = 0
+
+    # TODO Polish up save and laod
+    if args.load_path:
+        log.info(f'Loading checkpoint from {args.load_path}...')
+        discriminator, step = util.load_model(discriminator, args.load_path, args.gpu_ids, return_step=True)
+
+        if not args.resume_step:
+            step = 0
+
+    style_discriminator = style_discriminator.to(device)
+    content_discriminator = content_discriminator.to(device)
     generator = generator.to(device)
-    discriminator = discriminator.to(device)
+    style_discriminator.train()
+    content_discriminator.train()
     generator.train()
-    discriminator.train()
 
     # Set criterion
-    criterion = F.binary_cross_entropy_with_logits
+    criterion = criterion = nn.TripletMarginLoss(margin=4.0, p=2)
 
     # Get optimizer and scheduler
     gen_optimizer = optim.Adadelta(generator.parameters(), args.lr,
                                    weight_decay=args.l2_wd)
-    disc_optimizer = optim.Adadelta(discriminator.parameters(), args.lr,
+    style_disc_optimizer = optim.Adadelta(style_discriminator.parameters(), args.lr,
                                     weight_decay=args.l2_wd)
-    gen_scheduler = sched.LambdaLR(gen_optimizer, lambda s: 1.)
-    disc_scheduler = sched.LambdaLR(disc_optimizer, lambda s: 1.)
-
+    content_disc_optimizer = optim.Adadelta(content_discriminator.parameters(), args.lr,
+                                    weight_decay=args.l2_wd)
     # Build dataset
-    train_dataset = FontDataset(args.train_dir)  # Path
-    dev_dataset = FontDataset(args.dev_dir)  # Path
+    train_dataset = FontDataset(args.train_dir, rand=True)
+    dev_dataset = FontDataset(args.dev_dir, rand=True)
 
     train_loader = data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True)
@@ -102,70 +130,89 @@ def main(args=None):
     if not os.path.isdir('outputs/{}'.format(args.name)):
         os.mkdir('outputs/{}'.format(args.name))
 
-    step = 0
-    steps_til_eval = args.eval_steps
+    # steps_til_eval = len(train_dataset)
+    steps_til_eval = 0
     epoch = step // len(train_dataset)
     while epoch < args.epochs:
         log.info('Starting epoch {}...'.format(epoch))
 
         with torch.enable_grad(), tqdm(total=len(train_loader.dataset)) as progress_bar:
             for orig, condition, target, false_target in train_loader:
-                curr_batch_size = len(orig)
-                progress_bar.update(curr_batch_size)
-                # Pass into generator: original font + target text
-                x = torch.cat([orig, condition], dim=1).to(device)
-                # To pass into discriminator: target + original font
-                output_real = torch.cat([target, orig], dim=1).to(device)
 
-                # Dataset-generated false fonts
-                # To pass into discriminator: false_target + original font
-                output_false = torch.cat(
-                    [false_target, orig], dim=1).to(device)
+                curr_batch_size, c, h, w = orig.shape
+                progress_bar.update(curr_batch_size)
 
                 orig = orig.to(device)
+                condition = condition.to(device)
+                target = target.to(device)
+                false_target = false_target.to(device)
 
                 # Update discriminator
-                disc_optimizer.zero_grad()
-                gen_imgs = generator(x).detach()
+                style_disc_optimizer.zero_grad()
+                content_disc_optimizer.zero_grad()
+
+                # Maybe we don't need false target at all
+                style_real_loss = get_disc_loss(style_discriminator, torch.cat([orig, target, false_target]), curr_batch_size, criterion)
+                content_real_loss = get_disc_loss(content_discriminator, torch.cat([condition, target, orig]), curr_batch_size, criterion)
+
+                gen_imgs = F.gumbel_softmax(generator(orig, condition).detach())
+
+                if args.skip_epochs and epoch < args.skip_epochs:
+                    style_loss = style_fake_loss
+                    content_Loss = content_fake_loss
+                else:
+                    style_fake_loss = get_disc_loss(style_discriminator, torch.cat([orig, target, gen_imgs]), curr_batch_size, criterion)
+                    content_fake_loss = get_disc_loss(content_discriminator, torch.cat([condition, target, gen_imgs]), curr_batch_size, criterion)
+
+                    style_loss = (style_real_loss + style_fake_loss) / 2
+                    content_loss = (content_real_loss + content_fake_loss) / 2
                 # To pass into discriminator: generated + original font
-                output_fake = torch.cat([gen_imgs, orig], dim=1)
+                # output_fake = torch.cat([gen_imgs, orig], dim=1)
 
-                disc_pred = discriminator(torch.cat([output_real, output_fake, output_false], dim=0)).squeeze(
-                    dim=1)  # shape = (batch_size,)
-                # First [batch_size] images are of the real
-                disc_real = disc_pred[:curr_batch_size]
-                # Rest are of fake images
-                disc_fake = disc_pred[curr_batch_size:]
+                # disc_pred = discriminator(torch.cat([output_real, output_fake, output_false], dim=0)).squeeze(
+                #     dim=1)  # shape = (batch_size,)
+                # # First [batch_size] images are of the real
+                # disc_real = disc_pred[:curr_batch_size]
+                # # Rest are of fake images
+                # disc_fake = disc_pred[curr_batch_size:]
 
-                labels_real = torch.ones_like(disc_real)
-                labels_fake = torch.zeros_like(disc_fake)
+                # labels_real = torch.ones_like(disc_real)
+                # labels_fake = torch.zeros_like(disc_fake)
 
-                disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
-                disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
+                # disc_real_loss = criterion(disc_real, labels_real)  # BCE Loss
+                # disc_fake_loss = criterion(disc_fake, labels_fake)  # BCE Loss
 
-                disc_loss = (disc_real_loss + disc_fake_loss) / 2
+                # disc_loss = (disc_real_loss + disc_fake_loss) / 2
 
-                disc_loss.backward(retain_graph=True)
-                disc_optimizer.step()
-                tbx.add_scalar('train/DiscLoss', disc_loss.item(), step)
+                style_loss.backward(retain_graph=True)
+                content_loss.backward(retain_graph=True)
+                style_disc_optimizer.step()
+                content_disc_optimizer.step()
+
+                tbx.add_scalar('train/DiscContentLoss', content_loss.item(), step)
+                tbx.add_scalar('train/DiscStyleLoss', content_loss.item(), step)
+                tbx.add_scalar('train/DiscLoss', style_loss.item() + content_loss.item(), step)
 
                 # Train generator
                 gen_optimizer.zero_grad()
-                gen_imgs = generator(x)
+                gen_imgs = generator(orig, condition)
                 # To pass into discriminator: generated + original font
-                output_fake = torch.cat([gen_imgs, orig], dim=1)
-                disc_pred = discriminator(output_fake).squeeze(dim=1)
+                style_pred = style_discriminator(torch.cat([orig, gen_imgs]))
+                content_pred = content_discriminator(torch.cat([condition, gen_imgs]))
 
-                # We wish for the discrminator to mark these images as real
-                labels_fake = torch.ones_like(disc_pred)
+                # Objective - minimize distance
+                style_loss = l2_dist(style_pred[:curr_batch_size], style_pred[curr_batch_size:]).mean()
+                content_loss = l2_dist(content_pred[:curr_batch_size], content_pred[curr_batch_size:]).mean()
 
-                gen_loss = criterion(
-                    disc_pred, labels_fake) + args.lambda_recon * recon_crit(gen_imgs, target.to(device))
+                gen_loss = style_loss + content_loss
+
                 gen_loss.backward()
                 gen_optimizer.step()
 
                 progress_bar.set_postfix(epoch=epoch, GenLoss=gen_loss.item())
                 tbx.add_scalar('train/GenLoss', gen_loss.item(), step)
+                tbx.add_scalar('train/GenStyleLoss', style_loss.item(), step)
+                tbx.add_scalar('train/GenContentLoss', content_loss.item(), step)
 
                 step += curr_batch_size
 
@@ -173,15 +220,31 @@ def main(args=None):
                 if steps_til_eval <= 0:
                     save_outputs(gen_imgs, orig, condition, target,
                                  step, 'outputs/{}/train'.format(args.name))
-                    steps_til_eval = args.eval_steps
+                    steps_til_eval = len(train_dataset)
 
         # Save generator outputs and evaluate
         log.info('Evaluating')
-        evaluate(generator, dev_loader, device, epoch, step, tbx, args.name)
+        stats = evaluate(generator, style_discriminator, content_discriminator, dev_loader, device, criterion)
+        for key, val in stats.items():
+            tbx.add_scalar('dev/{}'.format(key), val, step)
+
         epoch += 1
 
     return 0
 
+def get_disc_loss(disc, x, curr_batch_size, criterion, margin=None):
+    feats = disc(x)  # shape = (batch_size, hidden_size)
+
+    anchor = feats[:curr_batch_size]
+    positive = feats[curr_batch_size:curr_batch_size * 2]
+    negative = feats[curr_batch_size*2:]
+
+    if margin:
+        real_correct = l2_dist(anchor, positive) <= margin
+        fake_correct = l2_dist(anchor, negative) > margin
+        return criterion(anchor, positive, negative), real_correct.sum().float(), fake_correct.sum().float()
+
+    return criterion(anchor, positive, negative)
 
 def save_outputs(gen_images, orig, condition, target, step, save_dir):
     if not os.path.isdir(save_dir):
@@ -207,42 +270,71 @@ def save_outputs(gen_images, orig, condition, target, step, save_dir):
                                  'condition-' + str(idx) + '.jpg'), condition_img)
         idx += 1
 
-
 def recon_crit(generated, target):
     return float((generated - target).abs().mean())
-
 
 def recon_crit2(generated, target):
     return float(((generated - target) ** 2).mean())
 
+def l2_dist(anchor, samples):
+    return torch.sqrt(((anchor - samples) ** 2).sum(dim=1))
 
-def evaluate(gen, dataloader, device, epoch, step, tb, name):
-    gen.eval()
-    total_loss = 0
-    saved = False
+def evaluate(generator, style_discriminator, content_discriminator, dataloader, device, criterion):
+    style_discriminator.eval()
+    content_discriminator.eval()
+    generator.eval()
+
+    disc_style_loss = 0
+    disc_content_loss = 0
+    gen_style_loss = 0
+    gen_content_loss = 0
+
+    disc_style_correct = 0 # Accuracy of style discriminator against ground truths
+    disc_content_correct = 0 # Accuracy of content discriminator against ground truths
+
     with torch.no_grad(), tqdm(total=len(dataloader.dataset)) as progress_bar:
-        for orig, condition, target, _ in dataloader:
+        for orig, condition, target, false_target in dataloader:
             curr_batch_size = len(orig)
             progress_bar.update(curr_batch_size)
 
+            # Evaluate discriminator
             orig = orig.to(device)
-            condition = condition.to(device)
             target = target.to(device)
+            condition = condition.to(device)
+            false_target = false_target.to(device)
 
-            x = torch.cat([orig, condition], dim=1).to(device)
-            gen_imgs = gen(x)
-            total_loss += float((gen_imgs -
-                                 target).abs().mean(dim=(1, 2, 3)).sum())
+            style_real_loss, style_real_correct, style_fake_correct = get_disc_loss(
+                style_discriminator, torch.cat([orig, target, false_target]), curr_batch_size, criterion, margin=4.0)
 
-            if not saved:
-                save_outputs(gen_imgs, orig, condition, target,
-                             step, 'outputs/{}/dev'.format(name))
-                saved = True
+            content_real_loss, content_real_correct, content_fake_correct = get_disc_loss(
+                content_discriminator, torch.cat([condition, target, orig]), curr_batch_size, criterion, margin=4.0)
 
-    tb.add_scalar('dev/L1Loss', total_loss / len(dataloader), epoch)
-    print('L1: {}'.format(total_loss / len(dataloader)))
-    gen.train()
+            disc_style_loss += style_real_loss * curr_batch_size
+            disc_content_loss += content_real_loss * curr_batch_size
 
+            disc_style_correct += style_real_correct + style_fake_correct
+            disc_content_correct += content_real_correct + content_fake_correct
+
+            # Evaluate generator
+            gen_imgs = F.gumbel_softmax(generator(orig, condition).detach())
+
+            style_pred = style_discriminator(torch.cat([orig, gen_imgs]))
+            content_pred = content_discriminator(torch.cat([condition, gen_imgs]))
+
+            gen_style_loss += l2_dist(style_pred[:curr_batch_size], style_pred[curr_batch_size:]).sum()
+            gen_content_loss += l2_dist(content_pred[:curr_batch_size], content_pred[curr_batch_size:]).sum()
+
+    style_discriminator.train()
+    content_discriminator.train()
+    generator.train()
+
+    return {'disc_style_loss': disc_style_loss.item() / len(dataloader.dataset), 
+    'disc_content_loss': disc_content_loss.item() / len(dataloader.dataset),
+    'gen_style_loss': gen_style_loss.item() / len(dataloader.dataset),
+    'gen_content_loss': gen_content_loss.item() / len(dataloader.dataset),
+    'disc_style_acc': disc_style_correct.item() / (2 * len(dataloader.dataset)),
+    'disc_content_acc': disc_content_correct.item() / (2 * len(dataloader.dataset)),
+    }
 
 if __name__ == '__main__':
     main()

@@ -57,9 +57,6 @@ def main(args=None):
 
     args = parser.parse_args()
 
-    generator = ResnetGenerator()
-    exit(0)
-
     log = util.get_logger(args.save_dir, args.name)
 
     save_dir = util.get_save_dir(
@@ -85,7 +82,7 @@ def main(args=None):
     torch.cuda.manual_seed_all(args.seed)
 
     # Build Models
-    log.info('Building model...')
+    log.info('Building models...')
     discriminator = DiscResNet()
     if args.load_path:
         log.info(f'Loading checkpoint from {args.load_path}...')
@@ -129,7 +126,6 @@ def main(args=None):
                 curr_batch_size = len(orig)
                 progress_bar.update(curr_batch_size)
 
-                # To pass into discriminator: target + original font
                 orig = orig.to(device)
                 condition = condition.to(device)
                 target = target.to(device)
