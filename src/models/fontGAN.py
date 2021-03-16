@@ -292,13 +292,16 @@ class DualHeadFontDiscriminator(nn.Module):
 class DiscResNet(nn.Module):
     def __init__(self, in_channels=1, hidden_features=128):
         super(DiscResNet, self).__init__()
-        self.head = models.resnet18(pretrained=False) # See if pretraining helps at all
+        # See if pretraining helps at all
+        self.head = models.resnet18(pretrained=False)
         num_ftrs = self.head.fc.in_features
-        self.head.fc = nn.Linear(num_ftrs, hidden_features) # Output of ResNet
-        self.head.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False) # Input layer
+        self.head.fc = nn.Linear(num_ftrs, hidden_features)  # Output of ResNet
+        self.head.conv1 = nn.Conv2d(
+            in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)  # Input layer
 
     def forward(self, x):
         return self.head(x)
+
 
 class ResnetBlock(nn.Module):
     """Define a Resnet block"""
@@ -311,7 +314,8 @@ class ResnetBlock(nn.Module):
         Original Resnet paper: https://arxiv.org/pdf/1512.03385.pdf
         """
         super(ResnetBlock, self).__init__()
-        self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias)
+        self.conv_block = self.build_conv_block(
+            dim, padding_type, norm_layer, use_dropout, use_bias)
 
     def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias):
         """Construct a convolutional block.
@@ -332,9 +336,11 @@ class ResnetBlock(nn.Module):
         elif padding_type == 'zero':
             p = 1
         else:
-            raise NotImplementedError('padding [%s] is not implemented' % padding_type)
+            raise NotImplementedError(
+                'padding [%s] is not implemented' % padding_type)
 
-        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim), nn.ReLU(True)]
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p,
+                                 bias=use_bias), norm_layer(dim), nn.ReLU(True)]
         if use_dropout:
             conv_block += [nn.Dropout(0.5)]
 
@@ -346,8 +352,10 @@ class ResnetBlock(nn.Module):
         elif padding_type == 'zero':
             p = 1
         else:
-            raise NotImplementedError('padding [%s] is not implemented' % padding_type)
-        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim)]
+            raise NotImplementedError(
+                'padding [%s] is not implemented' % padding_type)
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3,
+                                 padding=p, bias=use_bias), norm_layer(dim)]
 
         return nn.Sequential(*conv_block)
 
@@ -355,6 +363,7 @@ class ResnetBlock(nn.Module):
         """Forward function (with skip connections)"""
         out = x + self.conv_block(x)  # add skip connections
         return out
+
 
 class ResnetGeneratorBase(nn.Module):
     """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
@@ -380,7 +389,8 @@ class ResnetGeneratorBase(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         model = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+                 nn.Conv2d(input_nc, ngf, kernel_size=7,
+                           padding=0, bias=use_bias),
                  norm_layer(ngf),
                  nn.ReLU(True)]
 
@@ -394,7 +404,8 @@ class ResnetGeneratorBase(nn.Module):
         mult = 2 ** n_downsampling
         for i in range(n_blocks):       # add ResNet blocks
 
-            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+            model += [ResnetBlock(ngf * mult, padding_type=padding_type,
+                                  norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
         for i in range(n_downsampling):  # add upsampling layers
             mult = 2 ** (n_downsampling - i)
@@ -413,6 +424,7 @@ class ResnetGeneratorBase(nn.Module):
     def forward(self, input):
         """Standard forward"""
         return self.model(input)
+
 
 class ResnetGenerator(nn.Module):
     """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
@@ -438,37 +450,40 @@ class ResnetGenerator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         encoder = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
-                 norm_layer(ngf),
-                 nn.ReLU(True)]
+                   nn.Conv2d(input_nc, ngf, kernel_size=7,
+                             padding=0, bias=use_bias),
+                   norm_layer(ngf),
+                   nn.ReLU(True)]
 
         n_downsampling = 2
         for i in range(n_downsampling):  # add downsampling layers
             mult = 2 ** i
             encoder += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
-                      norm_layer(ngf * mult * 2),
-                      nn.ReLU(True)]
+                        norm_layer(ngf * mult * 2),
+                        nn.ReLU(True)]
 
         mult = 2 ** n_downsampling
         for i in range(n_blocks):       # add ResNet blocks
 
-            encoder += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+            encoder += [ResnetBlock(ngf * mult, padding_type=padding_type,
+                                    norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
         self.style_encoder = nn.Sequential(*encoder)
         self.content_encoder = nn.Sequential(*encoder)
 
-        self.merger = nn.Conv2d(ngf * mult * 2, ngf * mult, kernel_size=3, stride=1, padding=1, bias=use_bias)
+        self.merger = nn.Conv2d(
+            ngf * mult * 2, ngf * mult, kernel_size=3, stride=1, padding=1, bias=use_bias)
 
         upsampler = []
 
         for i in range(n_downsampling):  # add upsampling layers
             mult = 2 ** (n_downsampling - i)
             upsampler += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1,
-                                         bias=use_bias),
-                      norm_layer(int(ngf * mult / 2)),
-                      nn.ReLU(True)]
+                                             kernel_size=3, stride=2,
+                                             padding=1, output_padding=1,
+                                             bias=use_bias),
+                          norm_layer(int(ngf * mult / 2)),
+                          nn.ReLU(True)]
         upsampler += [nn.ReflectionPad2d(3)]
         upsampler += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
         upsampler += [nn.ReLU()]
@@ -483,6 +498,106 @@ class ResnetGenerator(nn.Module):
         x = torch.cat([style, content], dim=1)
         x = self.merger(x)
         return self.upsampler(x)
+
+
+class ResUnetGenerator(nn.Module):
+    """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
+    We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
+    """
+
+    def __init__(self, input_nc=1, output_nc=1, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+        """Construct a Resnet-based generator
+        Parameters:
+            input_nc (int)      -- the number of channels in input images
+            output_nc (int)     -- the number of channels in output images
+            ngf (int)           -- the number of filters in the last conv layer
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers
+            n_blocks (int)      -- the number of ResNet blocks
+            padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
+        """
+        assert(n_blocks >= 0)
+        super(ResUnetGenerator, self).__init__()
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        style_encoder = [nn.ReflectionPad2d(3),
+                         nn.Conv2d(input_nc, ngf, kernel_size=7,
+                                   padding=0, bias=use_bias),
+                         norm_layer(ngf),
+                         nn.ReLU(True)]
+
+        self.content_encoders = [nn.Sequential(nn.ReflectionPad2d(3),
+                                               nn.Conv2d(input_nc, ngf, kernel_size=7,
+                                                         padding=0, bias=use_bias),
+                                               norm_layer(ngf),
+                                               nn.ReLU(True))]
+
+        n_downsampling = 2
+        for i in range(n_downsampling):  # add downsampling layers
+            mult = 2 ** i
+            style_encoder += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                              norm_layer(ngf * mult * 2),
+                              nn.ReLU(True)]
+
+            self.content_encoders.append(nn.Sequential(nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                                                       norm_layer(
+                                                           ngf * mult * 2),
+                                                       nn.ReLU(True)))
+
+        mult = 2 ** n_downsampling
+        content_encoder_block = None
+        for i in range(n_blocks):       # add ResNet blocks
+
+            style_encoder += [ResnetBlock(ngf * mult, padding_type=padding_type,
+                                          norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+
+            content_encoder_block += nn.Sequential(ResnetBlock(ngf * mult, padding_type=padding_type,
+                                                               norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias))
+
+        self.content_encoders[-1] = nn.Sequential(
+            self.content_encoders[-1], content_encoder_block)  # Tie the last layer together with resnet layer
+
+        self.style_encoder = nn.Sequential(*content_encoder)
+        self.decoders = []
+
+        for i in range(n_downsampling):  # add upsampling layers
+            mult = 2 ** (n_downsampling - i)
+            # Maybe input shape should be 2x
+            self.decoders.append(nn.Sequential(nn.ConvTranspose2d(2 * ngf * mult, int(ngf * mult / 2),
+                                                                  kernel_size=3, stride=2,
+                                                                  padding=1, output_padding=1,
+                                                                  bias=use_bias),
+                                               norm_layer(
+                int(ngf * mult / 2)),
+                nn.ReLU(True)))
+
+        self.decoders.append(nn.Sequential(nn.ReflectionPad2d(3), nn.Conv2d(
+            ngf, output_nc, kernel_size=7, padding=0), nn.ReLU()))
+
+    def forward(self, style, content):
+        self.style_hidden = self.style_encoder(style)
+
+        # Recursively apply encoder and corresponding decoder
+        return _combine_and_decode(content, 0, len(self.decoders) - 1)
+
+    def _combine_and_decode(self, x, content_encoder_idx, decoder_idx):
+        if decoder_idx < 0:
+            return self.style_hidden
+
+        curr_encoder = self.content_encoders[content_encoder_idx]
+        x_enc = curr_encoder(x)
+
+        y = _combine_and_decode(
+            x_enc, content_encoder_idx + 1, decoder_idx - 1)
+
+        curr_decoder = self.decoders[decoder_idx]
+
+        output = torch.cat([x_enc, y], dim=1)
+        return curr_decoder(output)
+
 
 class FontGenerator(nn.Module):
     '''
