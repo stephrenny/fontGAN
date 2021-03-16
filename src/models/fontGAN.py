@@ -598,6 +598,7 @@ class ResUnetGenerator(nn.Module):
         output = torch.cat([x_enc, y], dim=1)
         return curr_decoder(output)
 
+
 class FontGenerator(nn.Module):
     '''
     FontGenerator Class

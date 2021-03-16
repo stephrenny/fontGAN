@@ -15,7 +15,7 @@ from json import dumps
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from src.models.fontGAN import DiscResNet, ResnetGenerator
+from src.models.fontGAN import DiscResNet, ResUnetGenerator
 from src.dataloader import FontDataset
 
 """
@@ -86,14 +86,15 @@ def main(args=None):
     log.info('Building models...')
     style_discriminator = DiscResNet()
     content_discriminator = DiscResNet()
-    generator = ResnetGenerator()
+    generator = ResUnetGenerator()
 
     step = 0
 
     # TODO Polish up save and laod
     if args.load_path:
         log.info(f'Loading checkpoint from {args.load_path}...')
-        discriminator, step = util.load_model(discriminator, args.load_path, args.gpu_ids, return_step=True)
+        discriminator, step = util.load_model(
+            discriminator, args.load_path, args.gpu_ids, return_step=True)
 
         if not args.resume_step:
             step = 0
@@ -112,9 +113,9 @@ def main(args=None):
     gen_optimizer = optim.Adadelta(generator.parameters(), args.lr,
                                    weight_decay=args.l2_wd)
     style_disc_optimizer = optim.Adadelta(style_discriminator.parameters(), args.lr,
-                                    weight_decay=args.l2_wd)
+                                          weight_decay=args.l2_wd)
     content_disc_optimizer = optim.Adadelta(content_discriminator.parameters(), args.lr,
-                                    weight_decay=args.l2_wd)
+                                            weight_decay=args.l2_wd)
     # Build dataset
     train_dataset = FontDataset(args.train_dir, rand=True)
     dev_dataset = FontDataset(args.dev_dir, rand=True)
@@ -152,17 +153,22 @@ def main(args=None):
                 content_disc_optimizer.zero_grad()
 
                 # Maybe we don't need false target at all
-                style_real_loss = get_disc_loss(style_discriminator, torch.cat([orig, target, false_target]), curr_batch_size, criterion)
-                content_real_loss = get_disc_loss(content_discriminator, torch.cat([condition, target, orig]), curr_batch_size, criterion)
+                style_real_loss = get_disc_loss(style_discriminator, torch.cat(
+                    [orig, target, false_target]), curr_batch_size, criterion)
+                content_real_loss = get_disc_loss(content_discriminator, torch.cat(
+                    [condition, target, orig]), curr_batch_size, criterion)
 
-                gen_imgs = F.gumbel_softmax(generator(orig, condition).detach())
+                gen_imgs = F.gumbel_softmax(
+                    generator(orig, condition).detach())
 
                 if args.skip_epochs and epoch < args.skip_epochs:
                     style_loss = style_fake_loss
                     content_Loss = content_fake_loss
                 else:
-                    style_fake_loss = get_disc_loss(style_discriminator, torch.cat([orig, target, gen_imgs]), curr_batch_size, criterion)
-                    content_fake_loss = get_disc_loss(content_discriminator, torch.cat([condition, target, gen_imgs]), curr_batch_size, criterion)
+                    style_fake_loss = get_disc_loss(style_discriminator, torch.cat(
+                        [orig, target, gen_imgs]), curr_batch_size, criterion)
+                    content_fake_loss = get_disc_loss(content_discriminator, torch.cat(
+                        [condition, target, gen_imgs]), curr_batch_size, criterion)
 
                     style_loss = (style_real_loss + style_fake_loss) / 2
                     content_loss = (content_real_loss + content_fake_loss) / 2
@@ -189,20 +195,26 @@ def main(args=None):
                 style_disc_optimizer.step()
                 content_disc_optimizer.step()
 
-                tbx.add_scalar('train/DiscContentLoss', content_loss.item(), step)
-                tbx.add_scalar('train/DiscStyleLoss', content_loss.item(), step)
-                tbx.add_scalar('train/DiscLoss', style_loss.item() + content_loss.item(), step)
+                tbx.add_scalar('train/DiscContentLoss',
+                               content_loss.item(), step)
+                tbx.add_scalar('train/DiscStyleLoss',
+                               content_loss.item(), step)
+                tbx.add_scalar('train/DiscLoss',
+                               style_loss.item() + content_loss.item(), step)
 
                 # Train generator
                 gen_optimizer.zero_grad()
                 gen_imgs = generator(orig, condition)
                 # To pass into discriminator: generated + original font
                 style_pred = style_discriminator(torch.cat([orig, gen_imgs]))
-                content_pred = content_discriminator(torch.cat([condition, gen_imgs]))
+                content_pred = content_discriminator(
+                    torch.cat([condition, gen_imgs]))
 
                 # Objective - minimize distance
-                style_loss = l2_dist(style_pred[:curr_batch_size], style_pred[curr_batch_size:]).mean()
-                content_loss = l2_dist(content_pred[:curr_batch_size], content_pred[curr_batch_size:]).mean()
+                style_loss = l2_dist(
+                    style_pred[:curr_batch_size], style_pred[curr_batch_size:]).mean()
+                content_loss = l2_dist(
+                    content_pred[:curr_batch_size], content_pred[curr_batch_size:]).mean()
 
                 gen_loss = style_loss + content_loss
 
@@ -212,7 +224,8 @@ def main(args=None):
                 progress_bar.set_postfix(epoch=epoch, GenLoss=gen_loss.item())
                 tbx.add_scalar('train/GenLoss', gen_loss.item(), step)
                 tbx.add_scalar('train/GenStyleLoss', style_loss.item(), step)
-                tbx.add_scalar('train/GenContentLoss', content_loss.item(), step)
+                tbx.add_scalar('train/GenContentLoss',
+                               content_loss.item(), step)
 
                 step += curr_batch_size
 
@@ -224,13 +237,15 @@ def main(args=None):
 
         # Save generator outputs and evaluate
         log.info('Evaluating')
-        stats = evaluate(generator, style_discriminator, content_discriminator, dev_loader, device, criterion)
+        stats = evaluate(generator, style_discriminator,
+                         content_discriminator, dev_loader, device, criterion)
         for key, val in stats.items():
             tbx.add_scalar('dev/{}'.format(key), val, step)
 
         epoch += 1
 
     return 0
+
 
 def get_disc_loss(disc, x, curr_batch_size, criterion, margin=None):
     feats = disc(x)  # shape = (batch_size, hidden_size)
@@ -245,6 +260,7 @@ def get_disc_loss(disc, x, curr_batch_size, criterion, margin=None):
         return criterion(anchor, positive, negative), real_correct.sum().float(), fake_correct.sum().float()
 
     return criterion(anchor, positive, negative)
+
 
 def save_outputs(gen_images, orig, condition, target, step, save_dir):
     if not os.path.isdir(save_dir):
@@ -270,14 +286,18 @@ def save_outputs(gen_images, orig, condition, target, step, save_dir):
                                  'condition-' + str(idx) + '.jpg'), condition_img)
         idx += 1
 
+
 def recon_crit(generated, target):
     return float((generated - target).abs().mean())
+
 
 def recon_crit2(generated, target):
     return float(((generated - target) ** 2).mean())
 
+
 def l2_dist(anchor, samples):
     return torch.sqrt(((anchor - samples) ** 2).sum(dim=1))
+
 
 def evaluate(generator, style_discriminator, content_discriminator, dataloader, device, criterion):
     style_discriminator.eval()
@@ -289,8 +309,8 @@ def evaluate(generator, style_discriminator, content_discriminator, dataloader, 
     gen_style_loss = 0
     gen_content_loss = 0
 
-    disc_style_correct = 0 # Accuracy of style discriminator against ground truths
-    disc_content_correct = 0 # Accuracy of content discriminator against ground truths
+    disc_style_correct = 0  # Accuracy of style discriminator against ground truths
+    disc_content_correct = 0  # Accuracy of content discriminator against ground truths
 
     with torch.no_grad(), tqdm(total=len(dataloader.dataset)) as progress_bar:
         for orig, condition, target, false_target in dataloader:
@@ -319,22 +339,26 @@ def evaluate(generator, style_discriminator, content_discriminator, dataloader, 
             gen_imgs = F.gumbel_softmax(generator(orig, condition).detach())
 
             style_pred = style_discriminator(torch.cat([orig, gen_imgs]))
-            content_pred = content_discriminator(torch.cat([condition, gen_imgs]))
+            content_pred = content_discriminator(
+                torch.cat([condition, gen_imgs]))
 
-            gen_style_loss += l2_dist(style_pred[:curr_batch_size], style_pred[curr_batch_size:]).sum()
-            gen_content_loss += l2_dist(content_pred[:curr_batch_size], content_pred[curr_batch_size:]).sum()
+            gen_style_loss += l2_dist(style_pred[:curr_batch_size],
+                                      style_pred[curr_batch_size:]).sum()
+            gen_content_loss += l2_dist(
+                content_pred[:curr_batch_size], content_pred[curr_batch_size:]).sum()
 
     style_discriminator.train()
     content_discriminator.train()
     generator.train()
 
-    return {'disc_style_loss': disc_style_loss.item() / len(dataloader.dataset), 
-    'disc_content_loss': disc_content_loss.item() / len(dataloader.dataset),
-    'gen_style_loss': gen_style_loss.item() / len(dataloader.dataset),
-    'gen_content_loss': gen_content_loss.item() / len(dataloader.dataset),
-    'disc_style_acc': disc_style_correct.item() / (2 * len(dataloader.dataset)),
-    'disc_content_acc': disc_content_correct.item() / (2 * len(dataloader.dataset)),
-    }
+    return {'disc_style_loss': disc_style_loss.item() / len(dataloader.dataset),
+            'disc_content_loss': disc_content_loss.item() / len(dataloader.dataset),
+            'gen_style_loss': gen_style_loss.item() / len(dataloader.dataset),
+            'gen_content_loss': gen_content_loss.item() / len(dataloader.dataset),
+            'disc_style_acc': disc_style_correct.item() / (2 * len(dataloader.dataset)),
+            'disc_content_acc': disc_content_correct.item() / (2 * len(dataloader.dataset)),
+            }
+
 
 if __name__ == '__main__':
     main()
