@@ -162,8 +162,8 @@ def main(args=None):
                     generator(orig, condition).detach())
 
                 if args.skip_epochs and epoch < args.skip_epochs:
-                    style_loss = style_fake_loss
-                    content_Loss = content_fake_loss
+                    style_loss = style_real_loss
+                    content_loss = content_real_loss
                 else:
                     style_fake_loss = get_disc_loss(style_discriminator, torch.cat(
                         [orig, target, gen_imgs]), curr_batch_size, criterion)
@@ -216,7 +216,8 @@ def main(args=None):
                 content_loss = l2_dist(
                     content_pred[:curr_batch_size], content_pred[curr_batch_size:]).mean()
 
-                gen_loss = style_loss + content_loss
+                # gen_loss = style_loss + content_loss
+                gen_loss = style_loss
 
                 gen_loss.backward()
                 gen_optimizer.step()

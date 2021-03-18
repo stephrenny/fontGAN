@@ -554,13 +554,13 @@ class ResUnetGenerator(nn.Module):
             style_encoder += [ResnetBlock(ngf * mult, padding_type=padding_type,
                                           norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
-            content_encoder_block += nn.Sequential(ResnetBlock(ngf * mult, padding_type=padding_type,
+            content_encoder_block = nn.Sequential(ResnetBlock(ngf * mult, padding_type=padding_type,
                                                                norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias))
 
         self.content_encoders[-1] = nn.Sequential(
             self.content_encoders[-1], content_encoder_block)  # Tie the last layer together with resnet layer
 
-        self.style_encoder = nn.Sequential(*content_encoder)
+        self.style_encoder = nn.Sequential(*style_encoder)
         self.decoders = []
 
         for i in range(n_downsampling):  # add upsampling layers
@@ -570,28 +570,30 @@ class ResUnetGenerator(nn.Module):
                                                                   kernel_size=3, stride=2,
                                                                   padding=1, output_padding=1,
                                                                   bias=use_bias),
-                                               norm_layer(
-                int(ngf * mult / 2)),
-                nn.ReLU(True)))
+                                               norm_layer(int(ngf * mult / 2)),
+                                               nn.ReLU(True)))
 
         self.decoders.append(nn.Sequential(nn.ReflectionPad2d(3), nn.Conv2d(
-            ngf, output_nc, kernel_size=7, padding=0), nn.ReLU()))
+            2 * ngf, output_nc, kernel_size=7, padding=0), nn.ReLU()))
+
+        self.content_encoders = nn.ModuleList(self.content_encoders)
+        self.decoders = nn.ModuleList(self.decoders)
 
     def forward(self, style, content):
-        self.style_hidden = self.style_encoder(style)
+        style_hidden = self.style_encoder(style)
 
         # Recursively apply encoder and corresponding decoder
-        return _combine_and_decode(content, 0, len(self.decoders) - 1)
+        return self._combine_and_decode(content, 0, len(self.decoders) - 1, style_hidden)
 
-    def _combine_and_decode(self, x, content_encoder_idx, decoder_idx):
+    def _combine_and_decode(self, x, content_encoder_idx, decoder_idx, style_hidden):
         if decoder_idx < 0:
-            return self.style_hidden
+            return style_hidden
 
         curr_encoder = self.content_encoders[content_encoder_idx]
         x_enc = curr_encoder(x)
 
-        y = _combine_and_decode(
-            x_enc, content_encoder_idx + 1, decoder_idx - 1)
+        y = self._combine_and_decode(
+            x_enc, content_encoder_idx + 1, decoder_idx - 1, style_hidden)
 
         curr_decoder = self.decoders[decoder_idx]
 
